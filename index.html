@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="">
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="x-ua-compatible" content="ie=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>TnCode 滑块验证码</title>
+    <script type="text/javascript" src="tn_code.min.js?v=35"></script>
+    <link rel="stylesheet" type="text/css" href="style.css?v=27" />
+<style type="text/css">
+
+</style>
+</head>
+<body style="text-align:center;">
+    <div class="tncode" style="text-align: center;margin: 100px auto;"></div>
+
+    <a href="javascript:;">php+js实现极验滑块拖动验证码-tncode</a> | <a href="//weisifang.com" target="_blank">威四方</a>
+</body>
+<script type="text/javascript">
+    $TN.init({
+        handleDom:'.tncode', // 触发验证码容器
+        getImgUrl:'./get_img.php', // 获取验证码图片地址
+        checkUrl:'./check.php' // 验证地址
+    }).onSuccess(function(){
+        //验证通过
+        console.log('验证通过')
+    }).onFail(function(){
+        //验证失败
+        console.log('验证失败')
+    });
+</script>
+</html>

@@ -1,0 +1,19 @@
+/vendor
+.env
+.env.backup
+.env.production
+.phpactor.json
+.phpunit.result.cache
+/.idea
+
+# 忽略所有 . 开头的目录
+.*/
+# 忽略所有 . 开头的文件
+.*
+!.gitkeep
+# 排除.env.example文件
+!.env.example
+!.gitignore
+
+.DS_Store
+*.log
