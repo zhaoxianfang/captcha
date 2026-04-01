@@ -1,19 +1,24 @@
-/vendor
-.env
-.env.backup
-.env.production
-.phpactor.json
-.phpunit.result.cache
-/.idea
+# Composer
+/vendor/
+composer.lock
 
-# 忽略所有 . 开头的目录
-.*/
-# 忽略所有 . 开头的文件
-.*
-!.gitkeep
-# 排除.env.example文件
-!.env.example
-!.gitignore
-
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
 .DS_Store
+
+# 测试
+.phpunit.result.cache
+.phpunit.cache/
+coverage/
+
+# 日志
 *.log
+
+# 临时文件
+/tmp/
+/temp/
+/cache/
