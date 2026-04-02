@@ -1,0 +1,129 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="ChangeListManager">
+    <list default="true" id="aff6b9d3-3cc6-4a04-b18b-9e10157b66b8" name="更改" comment="">
+      <change afterPath="$PROJECT_DIR$/TnCode.php" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/check.php" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/get_img.php" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/index.html" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/style.css" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/style.min.css" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/tn_code.js" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/tn_code.min.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.gitattributes" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/.gitignore" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/CHANGELOG.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/LICENSE" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/composer.json" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/config/captcha.php" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/examples/advanced_usage.php" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/examples/laravel_example.php" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/examples/native_example.php" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/examples/redis_storage_example.php" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/examples/thinkphp_example.php" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/examples/yii_example.php" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/phpunit.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/readme.md" beforeDir="false" afterPath="$PROJECT_DIR$/readme.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/resources/assets/bg/1.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/resources/assets/bg/2.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/resources/assets/bg/3.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/resources/assets/bg/4.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/resources/assets/bg/5.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/resources/assets/css/captcha.css" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/resources/assets/img/icon.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/resources/assets/img/mark.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/resources/assets/img/mark2.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/resources/assets/img/mark_01.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/resources/assets/img/mark_02.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/resources/assets/js/captcha.js" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/Adapters/Laravel/CaptchaController.php" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/Adapters/Laravel/CaptchaFacade.php" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/Adapters/Laravel/CaptchaServiceProvider.php" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/Adapters/ThinkPHP/CaptchaController.php" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/Adapters/ThinkPHP/CaptchaService.php" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/Adapters/Yii/CaptchaController.php" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/Adapters/Yii/CaptchaModule.php" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/Captcha.php" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/CaptchaHelper.php" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/Contracts/RequestInterface.php" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/Contracts/ResponseInterface.php" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/Contracts/StorageInterface.php" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/Exceptions/CaptchaException.php" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/Http/CaptchaController.php" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/Http/GenericRequest.php" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/Http/GenericResponse.php" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/Storage/ArrayStorage.php" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/Storage/SessionStorage.php" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/Storage/StorageFactory.php" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/tests/CaptchaTest.php" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/tests/StorageTest.php" beforeDir="false" />
+    </list>
+    <option name="SHOW_DIALOG" value="false" />
+    <option name="HIGHLIGHT_CONFLICTS" value="true" />
+    <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
+    <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="ComposerSettings" synchronizationState="SYNCHRONIZE">
+    <pharConfigPath>$PROJECT_DIR$/composer.json</pharConfigPath>
+    <execution />
+  </component>
+  <component name="Git.Settings">
+    <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
+  </component>
+  <component name="PhpWorkspaceProjectConfiguration" interpreter_name="/opt/homebrew/Cellar/php/8.4.7/bin/php">
+    <include_path>
+      <path value="$PROJECT_DIR$/vendor/composer" />
+    </include_path>
+  </component>
+  <component name="ProjectColorInfo">{
+  &quot;associatedIndex&quot;: 1
+}</component>
+  <component name="ProjectId" id="3BkcnRnRCiv19f15f3suf5tK8Rg" />
+  <component name="ProjectViewState">
+    <option name="hideEmptyMiddlePackages" value="true" />
+    <option name="showLibraryContents" value="true" />
+  </component>
+  <component name="PropertiesComponent"><![CDATA[{
+  "keyToString": {
+    "ModuleVcsDetector.initialDetectionPerformed": "true",
+    "RunOnceActivity.ShowReadmeOnStart": "true",
+    "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
+    "RunOnceActivity.git.unshallow": "true",
+    "RunOnceActivity.typescript.service.memoryLimit.init": "true",
+    "git-widget-placeholder": "master",
+    "last_opened_file_path": "/Users/aha/www/captcha",
+    "nodejs_package_manager_path": "npm",
+    "run.code.analysis.last.selected.profile": "pProject Default",
+    "vue.rearranger.settings.migration": "true"
+  }
+}]]></component>
+  <component name="RunManager">
+    <configuration name="主" type="PHPUnitRunConfigurationType" factoryName="PHPUnit">
+      <TestRunner configuration_file="$PROJECT_DIR$/phpunit.xml" scope="XML" use_alternative_configuration_file="true" />
+      <method v="2" />
+    </configuration>
+  </component>
+  <component name="SharedIndexes">
+    <attachedChunks>
+      <set>
+        <option value="bundled-js-predefined-d6986cc7102b-9b0f141eb926-JavaScript-PS-253.31033.138" />
+        <option value="bundled-php-predefined-a98d8de5180a-0e0d91225499-com.jetbrains.php.sharedIndexes-PS-253.31033.138" />
+      </set>
+    </attachedChunks>
+  </component>
+  <component name="TaskManager">
+    <task active="true" id="Default" summary="默认任务">
+      <changelist id="aff6b9d3-3cc6-4a04-b18b-9e10157b66b8" name="更改" comment="" />
+      <created>1775036675084</created>
+      <option name="number" value="Default" />
+      <option name="presentableId" value="Default" />
+      <updated>1775036675084</updated>
+      <workItem from="1775036676821" duration="2895000" />
+      <workItem from="1775093093995" duration="9429000" />
+    </task>
+    <servers />
+  </component>
+  <component name="TypeScriptGeneratedFilesManager">
+    <option name="version" value="3" />
+  </component>
+</project>
