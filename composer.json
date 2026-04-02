@@ -1,0 +1,50 @@
+{
+    "name": "zxf/captcha",
+    "description": "高性能滑动验证码 PHP 扩展包，支持 Laravel、ThinkPHP 等主流框架",
+    "type": "library",
+    "keywords": ["captcha", "slide-captcha", "验证码", "滑动验证码", "laravel", "thinkphp", "php-captcha"],
+    "homepage": "https://github.com/zhaoxianfang/captcha",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "zhaoxianfang",
+            "email": "zhaoxianfang@163.com",
+            "homepage": "https://weisifang.com"
+        }
+    ],
+    "require": {
+        "php": ">=8.2",
+        "ext-gd": "*",
+        "ext-session": "*",
+        "ext-json": "*"
+    },
+    "suggest": {
+        "laravel/framework": "如需在 Laravel 中使用，请安装 Laravel 框架",
+        "topthink/framework": "如需在 ThinkPHP 中使用，请安装 ThinkPHP 框架"
+    },
+    "autoload": {
+        "psr-4": {
+            "zxf\\Captcha\\": "src/"
+        },
+        "files": [
+            "src/helpers.php"
+        ]
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "zxf\\Captcha\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "zxf\\Captcha\\Laravel\\CaptchaServiceProvider"
+            ],
+            "aliases": {
+                "xfCaptcha": "zxf\\Captcha\\Laravel\\Facades\\Captcha"
+            }
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}

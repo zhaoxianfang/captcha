@@ -1,24 +1,10 @@
-# Composer
 /vendor/
-composer.lock
-
-# IDE
-.idea/
-.vscode/
+/composer.lock
+/.idea/
+/.vscode/
+/.phpunit.result.cache
+/phpunit.xml
+.DS_Store
 *.swp
 *.swo
 *~
-.DS_Store
-
-# 测试
-.phpunit.result.cache
-.phpunit.cache/
-coverage/
-
-# 日志
-*.log
-
-# 临时文件
-/tmp/
-/temp/
-/cache/
