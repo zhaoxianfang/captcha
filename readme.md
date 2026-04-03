@@ -5,7 +5,7 @@
 
 高性能、安全、易用的滑动验证码 PHP 扩展包，支持 Laravel、ThinkPHP 等主流 PHP 框架，也可在原生 PHP 中使用。
 
-![滑动验证码演示](demo.png)
+![滑动验证码演示](demo.jpg)
 
 ## ✨ 特性
 
@@ -58,6 +58,12 @@ php artisan vendor:publish --tag=xf-captcha-config
 
 #### 3. 在 Blade 模板中使用
 
+Laravel 11 中引入 xfCaptcha 有三种方式：
+
+**方式一：使用 Blade 组件（推荐）**
+
+使用 `@include` 引入 Blade 组件，会自动加载 CSS 和 JS 资源：
+
 ```blade
 <!DOCTYPE html>
 <html>
@@ -68,7 +74,7 @@ php artisan vendor:publish --tag=xf-captcha-config
     <form method="POST" action="/login" id="loginForm">
         @csrf
         
-        <!-- 使用 Blade 组件 -->
+        <!-- 使用 Blade 组件 - 最简单的方式 -->
         @include('xf-captcha::captcha', [
             'selector' => '.xf-captcha',
             'placeholder' => '点击完成验证',
@@ -102,6 +108,144 @@ php artisan vendor:publish --tag=xf-captcha-config
             });
         });
     </script>
+</body>
+</html>
+```
+
+**方式二：手动引入资源（需要自定义时）**
+
+如果需要更多自定义控制，可以手动引入 CSS 和 JS：
+
+```blade
+<!DOCTYPE html>
+<html>
+<head>
+    <title>验证码演示</title>
+    <!-- 手动引入 CSS -->
+    <link rel="stylesheet" href="{{ route('xf-captcha.css') }}">
+</head>
+<body>
+    <form method="POST" action="/login" id="loginForm">
+        @csrf
+        
+        <!-- 验证码容器 -->
+        <div id="my-captcha"></div>
+        
+        <button type="submit">提交</button>
+    </form>
+    
+    <!-- 手动引入 JS -->
+    <script src="{{ route('xf-captcha.js') }}"></script>
+    <script>
+        // 手动初始化
+        xfCaptcha.init({
+            handleDom: '#my-captcha',
+            getImgUrl: '{{ route('xf-captcha.image') }}',
+            checkUrl: '{{ route('xf-captcha.check') }}',
+            placeholder: '点击完成验证',
+            inputName: 'xf_captcha',
+            theme: 'auto'
+        });
+        
+        // 表单提交
+        document.getElementById('loginForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            fetch('/login', {
+                method: 'POST',
+                body: new FormData(this)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('登录成功！');
+                } else {
+                    alert('登录失败：' + data.message);
+                    xfCaptcha.reset();
+                }
+            });
+        });
+    </script>
+</body>
+</html>
+```
+
+**方式三：使用 @stack 和 @push（需要控制资源加载位置时）**
+
+如果需要在特定位置（如页面底部）加载 JS，可以使用 @stack：
+
+```blade
+<!DOCTYPE html>
+<html>
+<head>
+    <title>验证码演示</title>
+    <!-- 在头部加载 CSS -->
+    <link rel="stylesheet" href="{{ route('xf-captcha.css') }}">
+</head>
+<body>
+    <form method="POST" action="/login" id="loginForm">
+        @csrf
+        
+        @include('xf-captcha::captcha', [
+            'selector' => '.xf-captcha',
+            'placeholder' => '点击完成验证',
+            'inputName' => 'xf_captcha',
+        ])
+        
+        <div class="xf-captcha"></div>
+        
+        <button type="submit">提交</button>
+    </form>
+    
+    <!-- 在底部加载所有 JS -->
+    @stack('scripts')
+    
+    <script>
+        // 表单提交逻辑
+        document.getElementById('loginForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            // ... 提交逻辑
+        });
+    </script>
+</body>
+</html>
+```
+
+**方式四：使用资源混合（Laravel Mix/Vite）**
+
+如果使用 Laravel Mix 或 Vite 构建前端资源：
+
+```javascript
+// resources/js/app.js
+import 'zxf/captcha/resources/assets/js/captcha';
+import 'zxf/captcha/resources/assets/css/captcha.css';
+
+// 初始化验证码
+document.addEventListener('DOMContentLoaded', function() {
+    xfCaptcha.init({
+        handleDom: '.xf-captcha',
+        getImgUrl: '/xf_captcha/image',
+        checkUrl: '/xf_captcha/check',
+        inputName: 'xf_captcha'
+    });
+});
+```
+
+然后在 Blade 模板中：
+
+```blade
+<!DOCTYPE html>
+<html>
+<head>
+    <title>验证码演示</title>
+    @vite(['resources/css/app.css', 'resources/js/app.js'])
+</head>
+<body>
+    <form method="POST" action="/login">
+        @csrf
+        <div class="xf-captcha"></div>
+        <button type="submit">提交</button>
+    </form>
 </body>
 </html>
 ```
