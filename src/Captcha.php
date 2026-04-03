@@ -599,7 +599,20 @@ class Captcha
         $isValid = $diff <= $this->faultTolerance;
 
         if ($isValid) {
-            // 生成一次性令牌
+            // 根据验证模式处理
+            $verifyMode = $this->config['verify_mode'] ?? self::VERIFY_DUAL;
+            
+            if ($verifyMode === self::VERIFY_BACKEND_ONLY) {
+                // 仅后端验证模式：验证成功后立即销毁数据
+                $this->handleSuccessfulCheck();
+                return [
+                    'success' => true,
+                    'token' => null,
+                    'message' => '验证成功',
+                ];
+            }
+            
+            // 双重验证模式：生成一次性令牌
             $token = $this->generateToken();
             $this->setSessionValue($this->sessionKeyToken, $token);
             $this->setSessionValue($this->sessionKeyTokenExpire, time() + $this->tokenExpire);

@@ -174,11 +174,13 @@
         _doing: false,
         _result: false,
         _errorCount: 0,
+        _token: null,
 
         // 位置信息
         _blockStartX: 0,
         _blockStartY: 0,
         _markOffset: 0,
+        _rafId: null,
 
         // 尺寸配置
         _markWidth: 50,
@@ -206,6 +208,9 @@
             showClose: true,
             showRefresh: true,
             showRipple: true,
+            theme: "auto",
+            inputName: "xf_captcha_token",
+            autoInsertInput: true,
         },
 
         /**
@@ -273,15 +278,27 @@
             // 限制滑动范围
             offset = Math.max(0, Math.min(offset, maxOffset));
 
-            // 更新滑块位置
-            const block = document.querySelector(".captcha_slide_block");
-            if (block) {
-                block.style.transform = "translateX(" + offset + "px)";
+            // 如果位置没有变化，不更新
+            if (offset === xfCaptcha._markOffset) return;
+
+            // 使用 requestAnimationFrame 优化性能
+            if (xfCaptcha._rafId) {
+                cancelAnimationFrame(xfCaptcha._rafId);
             }
 
-            // 计算比例位置
-            xfCaptcha._markOffset = offset;
-            xfCaptcha._drawMark();
+            xfCaptcha._rafId = requestAnimationFrame(() => {
+                // 更新滑块位置
+                const block = document.querySelector(".captcha_slide_block");
+                if (block) {
+                    block.style.transform = "translateX(" + offset + "px)";
+                }
+
+                // 计算比例位置
+                xfCaptcha._markOffset = offset;
+                xfCaptcha._drawMark();
+
+                xfCaptcha._rafId = null;
+            });
         },
 
         /**
@@ -345,6 +362,10 @@
                              result.status === "success";
 
             if (isSuccess) {
+                // 保存后端返回的 token（双重验证模式使用）
+                if (result.token) {
+                    xfCaptcha._token = result.token;
+                }
                 xfCaptcha._handleSuccess();
             } else {
                 xfCaptcha._handleFail(result.message || result.error || xfCaptcha._options.failText);
@@ -401,6 +422,11 @@
                 removeClass(handleDom, "captcha_ripple");
             }
 
+            // 生成验证令牌并创建隐藏输入框
+            if (xfCaptcha._options.autoInsertInput && xfCaptcha._options.inputName) {
+                xfCaptcha._insertHiddenInput();
+            }
+
             // 自动关闭
             setTimeout(() => {
                 xfCaptcha.hide();
@@ -410,6 +436,53 @@
             if (typeof xfCaptcha._onSuccess === "function") {
                 xfCaptcha._onSuccess();
             }
+        },
+
+        /**
+         * 插入隐藏输入框
+         */
+        _insertHiddenInput() {
+            const handleDom = document.querySelector(xfCaptcha._options.handleDom);
+            if (!handleDom) return;
+
+            // 查找最近的表单
+            let form = handleDom.closest("form");
+            let inputContainer = form || handleDom.parentNode;
+
+            // 检查是否已存在同名输入框
+            const existingInput = document.querySelector('input[name="' + xfCaptcha._options.inputName + '"]');
+            if (existingInput) {
+                existingInput.value = xfCaptcha._getToken();
+                return;
+            }
+
+            // 创建隐藏输入框
+            const input = document.createElement("input");
+            input.type = "hidden";
+            input.name = xfCaptcha._options.inputName;
+            input.value = xfCaptcha._getToken();
+
+            // 插入到容器
+            if (inputContainer) {
+                inputContainer.appendChild(input);
+            } else {
+                // 如果没有找到容器，插入到 handleDom 后面
+                handleDom.parentNode.insertBefore(input, handleDom.nextSibling);
+            }
+        },
+
+        /**
+         * 获取验证令牌
+         */
+        _getToken() {
+            // 优先使用后端返回的 token（双重验证模式）
+            if (xfCaptcha._token) {
+                return xfCaptcha._token;
+            }
+            // 如果没有后端 token，生成前端临时令牌
+            const timestamp = Date.now();
+            const random = Math.random().toString(36).substring(2, 15);
+            return timestamp + "_" + random + "_" + xfCaptcha._markOffset;
         },
 
         /**
@@ -433,10 +506,11 @@
             // 刷新验证码
             setTimeout(() => xfCaptcha.refresh(), 500);
 
-            // 添加水波纹
+            // 更新按钮文字为失败提示
             const handleDom = document.querySelector(xfCaptcha._options.handleDom);
-            if (handleDom && !hasClass(handleDom, "captcha_ripple")) {
-                addClass(handleDom, "captcha_ripple");
+            if (handleDom) {
+                handleDom.innerHTML = xfCaptcha._options.failText;
+                removeClass(handleDom, "captcha_ripple");
             }
 
             // 触发回调
@@ -623,6 +697,7 @@
          */
         _reset() {
             xfCaptcha._markOffset = 0;
+            xfCaptcha._token = null;
             xfCaptcha._drawBg();
             xfCaptcha._drawMark();
 
@@ -733,7 +808,7 @@
             const html = `
                 <div class="captcha_div_bg" id="captcha_div_bg"></div>
                 <div class="captcha_div" id="captcha_div">
-                    <div class="captcha_loading">加载中...</div>
+                    <div class="captcha_loading"></div>
                     <canvas class="captcha_canvas_bg" width="240" height="150"></canvas>
                     <canvas class="captcha_canvas_mark" width="240" height="150"></canvas>
                     <div class="captcha_hlight"></div>
@@ -786,7 +861,7 @@
 
             // 显示加载中
             const loading = document.querySelector(".captcha_loading");
-            if (loading) loading.style.display = "block";
+            if (loading) loading.style.display = "flex";
 
             // 加载图片
             xfCaptcha._img = new Image();
@@ -912,6 +987,51 @@
          */
         onClose(fn) {
             xfCaptcha._onClose = fn;
+            return xfCaptcha;
+        },
+
+        /**
+         * 重置验证码状态
+         * 表单提交失败后调用此方法重新验证
+         *
+         * @returns {object} xfCaptcha 对象
+         */
+        reset() {
+            // 取消未完成的动画帧
+            if (xfCaptcha._rafId) {
+                cancelAnimationFrame(xfCaptcha._rafId);
+                xfCaptcha._rafId = null;
+            }
+
+            // 重置状态
+            xfCaptcha._result = false;
+            xfCaptcha._token = null;
+            xfCaptcha._errorCount = 0;
+            xfCaptcha._markOffset = 0;
+            xfCaptcha._doing = false;
+            xfCaptcha._isMoving = false;
+
+            // 移除隐藏输入框
+            if (xfCaptcha._options.inputName) {
+                const existingInput = document.querySelector('input[name="' + xfCaptcha._options.inputName + '"]');
+                if (existingInput) {
+                    existingInput.remove();
+                }
+            }
+
+            // 重置触发按钮
+            const triggers = document.querySelectorAll(xfCaptcha._options.handleDom);
+            triggers.forEach((elem) => {
+                elem.innerHTML = xfCaptcha._options.placeholder;
+                removeClass(elem, "verified");
+                if (xfCaptcha._options.showRipple) {
+                    addClass(elem, "captcha_ripple");
+                }
+            });
+
+            // 刷新验证码
+            xfCaptcha.refresh();
+
             return xfCaptcha;
         },
     };

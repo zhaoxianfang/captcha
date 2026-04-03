@@ -20,12 +20,12 @@
     --xf-captcha-slide-border: #c0c4cc;
     --xf-captcha-tools-border: #ebeef5;
     --xf-captcha-loading-bg: linear-gradient(135deg, #f5f7fa 0%, #e4e7ed 100%);
-    --xf-captcha-msg-error-bg: #fff1f0;
-    --xf-captcha-msg-error-text: #ff4d4f;
-    --xf-captcha-msg-error-border: #ffa39e;
-    --xf-captcha-msg-ok-bg: #f6ffed;
-    --xf-captcha-msg-ok-text: #52c41a;
-    --xf-captcha-msg-ok-border: #b7eb8f;
+    --xf-captcha-msg-error-bg: #ff4d4f;
+    --xf-captcha-msg-error-text: #ffffff;
+    --xf-captcha-msg-error-border: #ff4d4f;
+    --xf-captcha-msg-ok-bg: #52c41a;
+    --xf-captcha-msg-ok-text: #ffffff;
+    --xf-captcha-msg-ok-border: #52c41a;
     --xf-captcha-copyright: #909399;
     --xf-captcha-mask: rgba(0, 0, 0, 0.45);
 }
@@ -40,11 +40,11 @@
     --xf-captcha-slide-border: #555555;
     --xf-captcha-tools-border: #333333;
     --xf-captcha-loading-bg: linear-gradient(135deg, #2d2d2d 0%, #262626 100%);
-    --xf-captcha-msg-error-bg: #2a1215;
-    --xf-captcha-msg-error-text: #ff7875;
+    --xf-captcha-msg-error-bg: #ff4d4f;
+    --xf-captcha-msg-error-text: #ffffff;
     --xf-captcha-msg-error-border: #ff4d4f;
-    --xf-captcha-msg-ok-bg: #162312;
-    --xf-captcha-msg-ok-text: #95de64;
+    --xf-captcha-msg-ok-bg: #52c41a;
+    --xf-captcha-msg-ok-text: #ffffff;
     --xf-captcha-msg-ok-border: #52c41a;
     --xf-captcha-copyright: #737373;
     --xf-captcha-mask: rgba(0, 0, 0, 0.65);
@@ -60,20 +60,22 @@
     align-items: center;
     justify-content: center;
     width: 260px;
-    height: 40px;
+    height: 42px;
     border: 1px solid var(--xf-captcha-border);
-    border-radius: 6px;
+    border-radius: 8px;
     background: var(--xf-captcha-slide-bg);
     color: var(--xf-captcha-text);
     font-size: 13px;
+    font-weight: 500;
     cursor: pointer;
     transition: all 0.25s ease;
     user-select: none;
     position: relative;
     overflow: hidden;
-    box-shadow: 0 1px 3px var(--xf-captcha-shadow);
+    box-shadow: 0 2px 4px var(--xf-captcha-shadow);
     touch-action: manipulation;
     -webkit-tap-highlight-color: transparent;
+    letter-spacing: 0.3px;
 }
 
 .xf-captcha:hover {
@@ -238,6 +240,8 @@
 .captcha_canvas_bg {
     position: relative;
     z-index: 1;
+    border-radius: 6px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
 }
 
 .captcha_canvas_mark {
@@ -247,6 +251,7 @@
     transform: translateX(-50%);
     z-index: 2;
     pointer-events: none;
+    border-radius: 6px;
 }
 
 /* ============================================
@@ -255,30 +260,42 @@
 
 .captcha_loading {
     position: absolute;
-    top: 8px;
+    top: 50%;
     left: 50%;
-    transform: translateX(-50%);
-    width: 244px;
-    height: 152px;
+    transform: translate(-50%, -50%);
+    width: 120px;
+    height: 80px;
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
-    background: var(--xf-captcha-loading-bg);
+    background: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(4px);
     color: var(--xf-captcha-text);
-    font-size: 13px;
-    border-radius: 6px;
-    z-index: 3;
-    gap: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    border-radius: 10px;
+    z-index: 10;
+    gap: 8px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+    border: 1px solid var(--xf-captcha-border);
 }
 
-.captcha_loading::after {
+.captcha_loading::before {
     content: '';
-    width: 14px;
-    height: 14px;
+    width: 28px;
+    height: 28px;
     border: 2px solid var(--xf-captcha-border);
     border-top-color: #409eff;
     border-radius: 50%;
     animation: captcha-spin 0.8s linear infinite;
+}
+
+.captcha_loading::after {
+    content: '加载中';
+    font-size: 12px;
+    color: var(--xf-captcha-text);
+    letter-spacing: 1px;
 }
 
 @keyframes captcha-spin {
@@ -352,40 +369,30 @@
 }
 
 .captcha_msg_error {
-    background-color: var(--xf-captcha-msg-error-bg);
-    color: var(--xf-captcha-msg-error-text);
-    border: 1px solid var(--xf-captcha-msg-error-border);
+    background-color: #ff4d4f;
+    color: #ffffff;
+    border: 1px solid #ff4d4f;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+    font-weight: 600;
 }
 
 .captcha_msg_ok {
-    background-color: var(--xf-captcha-msg-ok-bg);
-    color: var(--xf-captcha-msg-ok-text);
-    border: 1px solid var(--xf-captcha-msg-ok-border);
+    background-color: #52c41a;
+    color: #ffffff;
+    border: 1px solid #52c41a;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+    font-weight: 600;
 }
 
-/* 移动端增强 - 使用更醒目的颜色 */
+/* 移动端增强 */
 @media (pointer: coarse) {
     .captcha_msg_error,
     .captcha_msg_ok {
         font-size: 13px;
-        font-weight: 600;
+        font-weight: 700;
         height: 32px;
         line-height: 32px;
-        box-shadow: 0 3px 10px rgba(0, 0, 0, 0.15);
-    }
-    
-    .captcha_msg_error {
-        background-color: #ff4d4f;
-        color: #ffffff;
-        border: 1px solid #ff4d4f;
-        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
-    }
-    
-    .captcha_msg_ok {
-        background-color: #52c41a;
-        color: #ffffff;
-        border: 1px solid #52c41a;
-        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+        box-shadow: 0 3px 10px rgba(0, 0, 0, 0.2);
     }
 }
 
@@ -453,17 +460,19 @@
 /* 滑块提示文字 */
 .captcha_slide_text {
     position: absolute;
-    left: 44px;
-    right: 8px;
+    left: 46px;
+    right: 10px;
     top: 0;
-    height: 36px;
-    line-height: 36px;
+    height: 38px;
+    line-height: 38px;
     text-align: center;
     font-size: 12px;
     color: var(--xf-captcha-text);
     user-select: none;
     z-index: 1;
-    opacity: 0.8;
+    opacity: 0.85;
+    font-weight: 500;
+    letter-spacing: 0.5px;
 }
 
 /* ============================================
@@ -533,28 +542,9 @@
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23909999'%3E%3Cpath d='M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z'/%3E%3C/svg%3E");
 }
 
-.captcha_close:hover {
-    background-color: #fde2e2;
-    border-color: #fbc4c4;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23f56c6c'%3E%3Cpath d='M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z'/%3E%3C/svg%3E");
-    transform: rotate(90deg);
-}
-
 /* 刷新按钮 */
 .captcha_refresh {
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23909999'%3E%3Cpath d='M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z'/%3E%3C/svg%3E");
-}
-
-.captcha_refresh:hover {
-    background-color: #ecf5ff;
-    border-color: #d9ecff;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23409eff'%3E%3Cpath d='M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z'/%3E%3C/svg%3E");
-    animation: captcha-rotate 0.4s ease;
-}
-
-@keyframes captcha-rotate {
-    from { transform: rotate(0deg); }
-    to { transform: rotate(360deg); }
 }
 
 /* ============================================
