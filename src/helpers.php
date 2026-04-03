@@ -16,7 +16,8 @@ if (!function_exists('xf_captcha')) {
      *
      * 用法：
      * 1. xf_captcha() - 获取 Captcha 实例
-     * 2. xf_captcha([]) - 使用自定义背景图生成验证码
+     * 2. xf_captcha(['/path/to/bg1.png', '/path/to/bg2.png']) - 使用自定义背景图生成验证码
+     * 3. xf_captcha(['fault_tolerance' => 5]) - 使用自定义配置
      *
      * @param array $configOrBgImages 配置数组或背景图片数组
      *
@@ -24,8 +25,17 @@ if (!function_exists('xf_captcha')) {
      */
     function xf_captcha(array $configOrBgImages = []): Captcha
     {
-        // 如果参数包含文件路径，则视为背景图片数组
-        if (!empty($configOrBgImages) && is_string(reset($configOrBgImages))) {
+        // 如果数组为空，直接返回新的 Captcha 实例
+        if (empty($configOrBgImages)) {
+            return new Captcha([]);
+        }
+
+        // 获取第一个元素的值
+        $firstValue = reset($configOrBgImages);
+        $firstKey = key($configOrBgImages);
+
+        // 如果参数包含文件路径（数字键且值为字符串路径），则视为背景图片数组
+        if (is_int($firstKey) && is_string($firstValue) && file_exists($firstValue)) {
             $config = [];
             if (function_exists('config')) {
                 $config = config('xf_captcha', []);
@@ -35,6 +45,7 @@ if (!function_exists('xf_captcha')) {
             return $captcha;
         }
 
+        // 否则视为配置数组
         return new Captcha($configOrBgImages);
     }
 }

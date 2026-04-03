@@ -29,6 +29,21 @@ use InvalidArgumentException;
 class Captcha
 {
     /**
+     * 验证模式：仅前端验证（不安全，仅用于测试）
+     */
+    public const VERIFY_FRONTEND_ONLY = 'frontend_only';
+
+    /**
+     * 验证模式：仅后端验证
+     */
+    public const VERIFY_BACKEND_ONLY = 'backend_only';
+
+    /**
+     * 验证模式：前端+后端双重验证（推荐）
+     */
+    public const VERIFY_DUAL = 'dual';
+
+    /**
      * 完整背景图片资源
      */
     private ?GdImage $imFullBg = null;
@@ -80,16 +95,18 @@ class Captcha
 
     /**
      * 容错像素值
-     * 值越大用户体验越好，但安全性降低
-     * 值越小安全性越高，但可能增加用户操作难度
      */
     private int $faultTolerance = 3;
 
     /**
      * 最大错误次数
-     * 超过此次数将强制刷新验证码
      */
     private int $maxErrorCount = 10;
+
+    /**
+     * Token过期时间（秒）
+     */
+    private int $tokenExpire = 300;
 
     /**
      * 配置数组
@@ -110,6 +127,26 @@ class Captcha
      * Session 键名 - 存储验证状态
      */
     private string $sessionKeyCheck = 'captcha_check';
+
+    /**
+     * Session 键名 - 存储验证令牌
+     */
+    private string $sessionKeyToken = 'captcha_token';
+
+    /**
+     * Session 键名 - 存储令牌过期时间
+     */
+    private string $sessionKeyTokenExpire = 'captcha_token_expire';
+
+    /**
+     * 是否使用模拟Session（CLI模式）
+     */
+    private bool $useMockSession = false;
+
+    /**
+     * 模拟Session存储
+     */
+    private array $mockSession = [];
 
     /**
      * 默认背景图片路径
@@ -153,16 +190,16 @@ class Captcha
             // 前端图标组图片路径
             'tool_icon_img' => $basePath . '/resources/assets/images/icon.png',
 
-            // 黑色滑块图片路径（用于滑块显示）
+            // 黑色滑块图片路径
             'slide_dark_img' => $basePath . '/resources/assets/images/mark_02.png',
 
-            // 透明滑块图片路径（用于背景缺口）
+            // 透明滑块图片路径
             'slide_transparent_img' => $basePath . '/resources/assets/images/mark_01.png',
 
             // 背景图片目录
             'bg_images_dir' => $basePath . '/resources/assets/images/bg/',
 
-            // 背景图片列表（留空则自动扫描目录）
+            // 背景图片列表
             'bg_images' => [],
 
             // 容错像素值
@@ -183,17 +220,23 @@ class Captcha
             // 滑块高度
             'mark_height' => 50,
 
-            // 图片输出格式：webp 或 png
+            // 图片输出格式
             'output_format' => 'webp',
 
-            // WebP 图片质量（0-100）
+            // WebP 图片质量
             'webp_quality' => 40,
 
-            // PNG 图片压缩级别（0-9）
+            // PNG 图片压缩级别
             'png_quality' => 7,
 
             // Session 前缀
             'session_prefix' => 'xf_captcha',
+
+            // 验证模式
+            'verify_mode' => self::VERIFY_DUAL,
+
+            // Token过期时间（秒）
+            'token_expire' => 300,
         ];
     }
 
@@ -208,14 +251,17 @@ class Captcha
         $this->markHeight = (int) ($this->config['mark_height'] ?? 50);
         $this->faultTolerance = (int) ($this->config['fault_tolerance'] ?? 3);
         $this->maxErrorCount = (int) ($this->config['max_error_count'] ?? 10);
+        $this->tokenExpire = (int) ($this->config['token_expire'] ?? 300);
 
         // 设置 Session 键名
         $prefix = $this->config['session_prefix'] ?? 'xf_captcha';
         $this->sessionKeyR = $prefix . '_r';
         $this->sessionKeyErr = $prefix . '_err';
         $this->sessionKeyCheck = $prefix . '_check';
+        $this->sessionKeyToken = $prefix . '_token';
+        $this->sessionKeyTokenExpire = $prefix . '_token_expire';
 
-        // 修复图片路径 - 如果配置中的路径不存在，使用默认路径
+        // 修复图片路径
         $this->fixImagePaths();
 
         // 设置默认背景图片
@@ -224,13 +270,11 @@ class Captcha
 
     /**
      * 修复图片路径
-     * 当配置文件中指定的路径不存在或为空时，使用包内的默认路径
      */
     private function fixImagePaths(): void
     {
         $packageRoot = dirname(__DIR__);
 
-        // 路径映射：配置键 => 默认文件名
         $pathMap = [
             'tool_icon_img' => 'icon.png',
             'slide_dark_img' => 'mark_02.png',
@@ -239,7 +283,6 @@ class Captcha
 
         foreach ($pathMap as $key => $defaultFilename) {
             $configuredPath = $this->config[$key] ?? '';
-            // 如果路径为空或文件不存在，使用默认路径
             if (empty($configuredPath) || !file_exists($configuredPath)) {
                 $defaultPath = $packageRoot . '/resources/assets/images/' . $defaultFilename;
                 if (file_exists($defaultPath)) {
@@ -248,7 +291,6 @@ class Captcha
             }
         }
 
-        // 修复背景图片目录
         $bgDir = $this->config['bg_images_dir'] ?? '';
         if (empty($bgDir) || !is_dir($bgDir)) {
             $defaultBgDir = $packageRoot . '/resources/assets/images/bg/';
@@ -265,12 +307,10 @@ class Captcha
      */
     private function getBgImages(): array
     {
-        // 如果配置了具体的背景图片列表，直接使用
         if (!empty($this->config['bg_images'])) {
             return $this->config['bg_images'];
         }
 
-        // 自动扫描背景图片目录
         $bgDir = $this->config['bg_images_dir'];
         if (!is_dir($bgDir)) {
             return [];
@@ -298,17 +338,74 @@ class Captcha
      */
     private function ensureSessionStarted(): void
     {
-        if (session_status() === PHP_SESSION_NONE) {
-            session_start();
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            return;
         }
+
+        if (session_status() === PHP_SESSION_NONE) {
+            if (php_sapi_name() === 'cli') {
+                $this->useMockSession = true;
+                return;
+            }
+
+            if (!headers_sent()) {
+                session_start();
+            } else {
+                $this->useMockSession = true;
+            }
+        }
+    }
+
+    /**
+     * 设置 Session 值
+     */
+    private function setSessionValue(string $key, mixed $value): void
+    {
+        if ($this->useMockSession) {
+            $this->mockSession[$key] = $value;
+        } else {
+            $_SESSION[$key] = $value;
+        }
+    }
+
+    /**
+     * 获取 Session 值
+     */
+    private function getSessionValue(string $key, mixed $default = null): mixed
+    {
+        if ($this->useMockSession) {
+            return $this->mockSession[$key] ?? $default;
+        }
+        return $_SESSION[$key] ?? $default;
+    }
+
+    /**
+     * 删除 Session 值
+     */
+    private function deleteSessionValue(string $key): void
+    {
+        if ($this->useMockSession) {
+            unset($this->mockSession[$key]);
+        } else {
+            unset($_SESSION[$key]);
+        }
+    }
+
+    /**
+     * 检查 Session 值是否存在
+     */
+    private function hasSessionValue(string $key): bool
+    {
+        if ($this->useMockSession) {
+            return isset($this->mockSession[$key]);
+        }
+        return isset($_SESSION[$key]);
     }
 
     /**
      * 生成验证码图片
      *
-     * 该方法生成并输出验证码图片到浏览器
-     *
-     * @param array $bgImages 自定义背景图片路径数组，不传则使用配置中的背景图
+     * @param array $bgImages 自定义背景图片路径数组
      *
      * @return void
      * @throws RuntimeException 当图片生成失败时抛出
@@ -342,7 +439,6 @@ class Captcha
             $this->createBg();
             $this->merge();
 
-            // 获取输出格式
             $format = $this->getOutputFormat();
             $quality = $format === 'webp'
                 ? (int) ($this->config['webp_quality'] ?? 40)
@@ -370,7 +466,6 @@ class Captcha
      */
     private function getOutputFormat(): string
     {
-        // 如果强制指定了格式
         if (isset($_GET['nowebp']) || !function_exists('imagewebp')) {
             return 'png';
         }
@@ -381,42 +476,224 @@ class Captcha
     /**
      * 验证用户滑动结果
      *
-     * @param string|int $offset 用户滑动的偏移量
+     * @param string|int|null $offset 用户滑动的偏移量
+     * @param string|null $token 验证令牌（双重验证模式使用）
      *
-     * @return bool 验证是否通过
+     * @return array 验证结果 ['success' => bool, 'token' => string|null, 'message' => string]
      */
-    public function check(string|int $offset = ''): bool
+    public function verify(string|int|null $offset = null, ?string $token = null): array
     {
-        // 检查 Session 中是否存在正确的滑块位置
-        if (!isset($_SESSION[$this->sessionKeyR])) {
-            return false;
+        $verifyMode = $this->config['verify_mode'] ?? self::VERIFY_DUAL;
+
+        return match ($verifyMode) {
+            self::VERIFY_FRONTEND_ONLY => $this->verifyFrontendOnly(),
+            self::VERIFY_BACKEND_ONLY => $this->verifyBackendOnly($offset),
+            self::VERIFY_DUAL => $this->verifyDual($offset, $token),
+            default => $this->verifyDual($offset, $token),
+        };
+    }
+
+    /**
+     * 仅前端验证模式（不安全，仅用于测试）
+     */
+    private function verifyFrontendOnly(): array
+    {
+        return [
+            'success' => true,
+            'token' => 'frontend_only',
+            'message' => '前端验证通过',
+        ];
+    }
+
+    /**
+     * 仅后端验证模式
+     */
+    private function verifyBackendOnly(string|int|null $offset): array
+    {
+        if (!$this->hasSessionValue($this->sessionKeyR)) {
+            return [
+                'success' => false,
+                'token' => null,
+                'message' => '验证码已过期，请刷新重试',
+            ];
         }
 
-        // 获取用户提交的偏移量
         if ($offset === '' || $offset === null) {
             $offset = $_REQUEST['captcha_r'] ?? $_REQUEST['xf_captcha'] ?? '';
         }
 
-        // 验证偏移量是否为有效数字
         if (!is_numeric($offset)) {
             $this->handleFailedCheck();
-            return false;
+            return [
+                'success' => false,
+                'token' => null,
+                'message' => '无效的偏移量',
+            ];
         }
 
         $offset = (float) $offset;
-        $correctPos = (float) $_SESSION[$this->sessionKeyR];
+        $correctPos = (float) $this->getSessionValue($this->sessionKeyR);
 
-        // 计算偏移差值是否在容错范围内
         $diff = abs($correctPos - $offset);
         $isValid = $diff <= $this->faultTolerance;
 
         if ($isValid) {
             $this->handleSuccessfulCheck();
+            return [
+                'success' => true,
+                'token' => null,
+                'message' => '验证成功',
+            ];
         } else {
             $this->handleFailedCheck();
+            return [
+                'success' => false,
+                'token' => null,
+                'message' => '验证失败，请重试',
+            ];
+        }
+    }
+
+    /**
+     * 双重验证模式
+     */
+    private function verifyDual(string|int|null $offset, ?string $token): array
+    {
+        // 如果有token，进行二次验证
+        if ($token !== null && $token !== '') {
+            return $this->verifySecondary($token);
         }
 
-        return $isValid;
+        // 首次验证
+        return $this->verifyPrimary($offset);
+    }
+
+    /**
+     * 首次验证（前端滑动验证）
+     */
+    private function verifyPrimary(string|int|null $offset): array
+    {
+        if (!$this->hasSessionValue($this->sessionKeyR)) {
+            return [
+                'success' => false,
+                'token' => null,
+                'message' => '验证码已过期，请刷新重试',
+            ];
+        }
+
+        if ($offset === '' || $offset === null) {
+            $offset = $_REQUEST['captcha_r'] ?? $_REQUEST['xf_captcha'] ?? '';
+        }
+
+        if (!is_numeric($offset)) {
+            $this->handleFailedCheck();
+            return [
+                'success' => false,
+                'token' => null,
+                'message' => '无效的偏移量',
+            ];
+        }
+
+        $offset = (float) $offset;
+        $correctPos = (float) $this->getSessionValue($this->sessionKeyR);
+
+        $diff = abs($correctPos - $offset);
+        $isValid = $diff <= $this->faultTolerance;
+
+        if ($isValid) {
+            // 生成一次性令牌
+            $token = $this->generateToken();
+            $this->setSessionValue($this->sessionKeyToken, $token);
+            $this->setSessionValue($this->sessionKeyTokenExpire, time() + $this->tokenExpire);
+            $this->setSessionValue($this->sessionKeyCheck, 'pending');
+
+            return [
+                'success' => true,
+                'token' => $token,
+                'message' => '验证成功，请完成后续操作',
+            ];
+        } else {
+            $this->handleFailedCheck();
+            return [
+                'success' => false,
+                'token' => null,
+                'message' => '验证失败，请重试',
+            ];
+        }
+    }
+
+    /**
+     * 二次验证（表单提交时验证）
+     */
+    private function verifySecondary(string $token): array
+    {
+        // 检查是否有待验证的token
+        if (!$this->hasSessionValue($this->sessionKeyToken)) {
+            return [
+                'success' => false,
+                'token' => null,
+                'message' => '验证令牌不存在，请重新验证',
+            ];
+        }
+
+        // 检查token是否匹配
+        $storedToken = $this->getSessionValue($this->sessionKeyToken);
+        if (!hash_equals($storedToken, $token)) {
+            return [
+                'success' => false,
+                'token' => null,
+                'message' => '验证令牌无效',
+            ];
+        }
+
+        // 检查token是否过期
+        $expireTime = $this->getSessionValue($this->sessionKeyTokenExpire, 0);
+        if (time() > $expireTime) {
+            $this->clearToken();
+            return [
+                'success' => false,
+                'token' => null,
+                'message' => '验证令牌已过期，请重新验证',
+            ];
+        }
+
+        // 检查是否已使用过
+        $checkStatus = $this->getSessionValue($this->sessionKeyCheck);
+        if ($checkStatus === 'used') {
+            return [
+                'success' => false,
+                'token' => null,
+                'message' => '验证令牌已被使用，请重新验证',
+            ];
+        }
+
+        // 标记为已使用
+        $this->setSessionValue($this->sessionKeyCheck, 'used');
+        $this->handleSuccessfulCheck();
+
+        return [
+            'success' => true,
+            'token' => null,
+            'message' => '二次验证成功',
+        ];
+    }
+
+    /**
+     * 生成验证令牌
+     */
+    private function generateToken(): string
+    {
+        return bin2hex(random_bytes(32));
+    }
+
+    /**
+     * 清除Token
+     */
+    private function clearToken(): void
+    {
+        $this->deleteSessionValue($this->sessionKeyToken);
+        $this->deleteSessionValue($this->sessionKeyTokenExpire);
+        $this->deleteSessionValue($this->sessionKeyCheck);
     }
 
     /**
@@ -424,12 +701,8 @@ class Captcha
      */
     private function handleSuccessfulCheck(): void
     {
-        // 清除正确位置信息
-        unset($_SESSION[$this->sessionKeyR]);
-        // 清除错误计数
-        unset($_SESSION[$this->sessionKeyErr]);
-        // 设置验证通过标记
-        $_SESSION[$this->sessionKeyCheck] = 'ok';
+        $this->deleteSessionValue($this->sessionKeyR);
+        $this->deleteSessionValue($this->sessionKeyErr);
     }
 
     /**
@@ -437,42 +710,46 @@ class Captcha
      */
     private function handleFailedCheck(): void
     {
-        // 增加错误次数计数
-        $errCount = ($_SESSION[$this->sessionKeyErr] ?? 0) + 1;
-        $_SESSION[$this->sessionKeyErr] = $errCount;
+        $errCount = ($this->getSessionValue($this->sessionKeyErr) ?? 0) + 1;
+        $this->setSessionValue($this->sessionKeyErr, $errCount);
 
-        // 如果错误次数超过上限，强制刷新（清除正确位置）
         if ($errCount > $this->maxErrorCount) {
-            unset($_SESSION[$this->sessionKeyR]);
+            $this->deleteSessionValue($this->sessionKeyR);
         }
 
-        // 设置验证失败标记
-        $_SESSION[$this->sessionKeyCheck] = 'error';
+        $this->setSessionValue($this->sessionKeyCheck, 'error');
     }
 
     /**
-     * 检查验证码是否已通过验证
+     * 检查验证码是否已通过验证（向后兼容）
      *
      * @return bool 是否已通过验证
      */
     public function isChecked(): bool
     {
-        return isset($_SESSION[$this->sessionKeyCheck]) &&
-               $_SESSION[$this->sessionKeyCheck] === 'ok';
+        $checkStatus = $this->getSessionValue($this->sessionKeyCheck);
+        return $checkStatus === 'used';
+    }
+
+    /**
+     * 检查验证状态
+     *
+     * @return string 验证状态：'none' | 'pending' | 'used' | 'error'
+     */
+    public function getCheckStatus(): string
+    {
+        return $this->getSessionValue($this->sessionKeyCheck, 'none');
     }
 
     /**
      * 刷新验证码
-     *
-     * 清除当前验证码状态，强制用户重新验证
-     *
-     * @return void
      */
     public function refresh(): void
     {
-        unset($_SESSION[$this->sessionKeyR]);
-        unset($_SESSION[$this->sessionKeyErr]);
-        unset($_SESSION[$this->sessionKeyCheck]);
+        $this->deleteSessionValue($this->sessionKeyR);
+        $this->deleteSessionValue($this->sessionKeyErr);
+        $this->deleteSessionValue($this->sessionKeyCheck);
+        $this->clearToken();
     }
 
     /**
@@ -490,35 +767,29 @@ class Captcha
             throw new RuntimeException('没有可用的背景图片，请配置背景图片');
         }
 
-        // 随机选择一张背景图
         $bgFile = $images[array_rand($images)];
 
         if (!file_exists($bgFile) || !is_readable($bgFile)) {
             throw new RuntimeException('背景图片不存在或无法读取: ' . $bgFile);
         }
 
-        // 加载背景图片
         $this->imFullBg = $this->loadImage($bgFile);
         if ($this->imFullBg === null) {
             throw new RuntimeException('加载背景图片失败: ' . $bgFile);
         }
 
-        // 创建主背景画布
         $this->imBg = imagecreatetruecolor($this->bgWidth, $this->bgHeight);
         if ($this->imBg === false) {
             throw new RuntimeException('创建背景画布失败');
         }
 
-        // 复制背景到画布
         imagecopy($this->imBg, $this->imFullBg, 0, 0, 0, 0, $this->bgWidth, $this->bgHeight);
 
-        // 创建滑块画布
         $this->imSlide = imagecreatetruecolor($this->markWidth, $this->bgHeight);
         if ($this->imSlide === false) {
             throw new RuntimeException('创建滑块画布失败');
         }
 
-        // 随机生成滑块位置
         $minX = $this->markWidth;
         $maxX = $this->bgWidth - $this->markWidth - 1;
         $maxY = $this->bgHeight - $this->markHeight - 1;
@@ -526,9 +797,8 @@ class Captcha
         $this->posX = mt_rand($minX, $maxX);
         $this->posY = mt_rand(0, max(0, $maxY));
 
-        // 存储正确位置到 Session
-        $_SESSION[$this->sessionKeyR] = $this->posX;
-        $_SESSION[$this->sessionKeyErr] = 0;
+        $this->setSessionValue($this->sessionKeyR, $this->posX);
+        $this->setSessionValue($this->sessionKeyErr, 0);
     }
 
     /**
@@ -579,7 +849,6 @@ class Captcha
             throw new RuntimeException('加载滑块图片失败: ' . $markFile);
         }
 
-        // 将背景的一部分复制到滑块
         imagecopy(
             $this->imSlide,
             $this->imFullBg,
@@ -591,10 +860,8 @@ class Captcha
             $this->markHeight
         );
 
-        // 将滑块标记覆盖到滑块上
         imagecopy($this->imSlide, $imgMark, 0, $this->posY, 0, 0, $this->markWidth, $this->markHeight);
 
-        // 设置透明色
         imagecolortransparent($this->imSlide, 0);
 
         imagedestroy($imgMark);
@@ -618,10 +885,8 @@ class Captcha
             throw new RuntimeException('加载透明滑块图片失败: ' . $markFile);
         }
 
-        // 设置透明色
         imagecolortransparent($im, 0);
 
-        // 将透明滑块复制到背景
         imagecopy($this->imBg, $im, $this->posX, $this->posY, 0, 0, $this->markWidth, $this->markHeight);
 
         imagedestroy($im);
@@ -632,16 +897,13 @@ class Captcha
      */
     private function merge(): void
     {
-        // 创建最终合成画布（高度为背景高度的3倍）
         $this->im = imagecreatetruecolor($this->bgWidth, $this->bgHeight * 3);
         if ($this->im === false) {
             throw new RuntimeException('创建合成画布失败');
         }
 
-        // 第一层：带缺口的背景
         imagecopy($this->im, $this->imBg, 0, 0, 0, 0, $this->bgWidth, $this->bgHeight);
 
-        // 第二层：滑块图片
         imagecopy(
             $this->im,
             $this->imSlide,
@@ -653,10 +915,8 @@ class Captcha
             $this->bgHeight
         );
 
-        // 第三层：完整背景（用于前端显示）
         imagecopy($this->im, $this->imFullBg, 0, $this->bgHeight * 2, 0, 0, $this->bgWidth, $this->bgHeight);
 
-        // 设置透明色
         imagecolortransparent($this->im, 0);
     }
 
@@ -665,7 +925,6 @@ class Captcha
      */
     private function output(): void
     {
-        // 清理输出缓冲区
         while (ob_get_level() > 0) {
             ob_end_clean();
         }
@@ -675,7 +934,6 @@ class Captcha
             ? (int) ($this->config['webp_quality'] ?? 40)
             : (int) ($this->config['png_quality'] ?? 7);
 
-        // 设置响应头
         if (!headers_sent()) {
             header('Content-Type: image/' . $format);
             header('Cache-Control: no-cache, no-store, must-revalidate');

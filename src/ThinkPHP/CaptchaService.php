@@ -1,7 +1,7 @@
 <?php
 
 /**
- * zxf/captcha - ThinkPHP 服务类
+ * zxf/captcha - ThinkPHP 8+ 服务类
  *
  * @package     zxf\Captcha\ThinkPHP
  * @author      zhaoxianfang <zhaoxianfang@163.com>
@@ -18,9 +18,7 @@ use think\Validate;
 use zxf\Captcha\Captcha;
 
 /**
- * ThinkPHP 验证码服务类
- *
- * 为 ThinkPHP 框架提供验证码服务集成
+ * ThinkPHP 8+ 验证码服务类
  *
  * @author zhaoxianfang
  * @since  2.0.0
@@ -66,15 +64,20 @@ class CaptchaService extends Service
     protected function registerRoutes(): void
     {
         $config = $this->app->config->get('xf_captcha', []);
-        $prefix = $config['route_prefix'] ?? 'captcha';
+        $prefix = $config['route_prefix'] ?? 'xf_captcha';
 
         /** @var Route $route */
         $route = $this->app->route;
 
         // 验证码图片
         $route->get($prefix . '/image', function () {
-            $captcha = app('xfCaptcha');
-            $captcha->make();
+            try {
+                /** @var Captcha $captcha */
+                $captcha = app('xfCaptcha');
+                $captcha->make();
+            } catch (\Throwable $e) {
+                return response('验证码生成失败: ' . $e->getMessage(), 500);
+            }
         });
 
         // 验证接口
@@ -85,17 +88,17 @@ class CaptchaService extends Service
             return $this->handleCheck();
         });
 
-        // 静态资源
+        // 静态资源 - 确保正确的 MIME 类型
         $route->get($prefix . '/js', function () {
-            return $this->outputStaticFile('js/captcha.js', 'application/javascript');
+            return $this->outputAsset('js/captcha.js', 'application/javascript');
         });
 
         $route->get($prefix . '/css', function () {
-            return $this->outputStaticFile('css/captcha.css', 'text/css');
+            return $this->outputAsset('css/captcha.css', 'text/css');
         });
 
         $route->get($prefix . '/icon', function () {
-            return $this->outputStaticFile('images/icon.png', 'image/png');
+            return $this->outputAsset('images/icon.png', 'image/png');
         });
     }
 
@@ -107,21 +110,21 @@ class CaptchaService extends Service
     protected function handleCheck(): \think\Response
     {
         try {
+            /** @var Captcha $captcha */
             $captcha = app('xfCaptcha');
-            $result = $captcha->check();
 
-            if ($result) {
-                return json([
-                    'success' => true,
-                    'message' => '验证成功',
-                    'code' => 200,
-                ]);
-            }
+            // 获取请求参数
+            $offset = request()->get('captcha_r') ?? request()->post('captcha_r');
+            $token = request()->get('xf_captcha_token') ?? request()->post('xf_captcha_token');
+
+            // 执行验证
+            $result = $captcha->verify($offset, $token);
 
             return json([
-                'success' => false,
-                'message' => '验证失败，请重试',
-                'code' => 400,
+                'success' => $result['success'],
+                'message' => $result['message'],
+                'code' => $result['success'] ? 200 : 400,
+                'token' => $result['token'],
             ]);
         } catch (\Throwable $e) {
             return json([
@@ -133,29 +136,58 @@ class CaptchaService extends Service
     }
 
     /**
-     * 输出静态文件
+     * 获取包根目录
      *
-     * @param string $path     相对路径
+     * @return string
+     */
+    protected function getPackageRoot(): string
+    {
+        $possiblePaths = [
+            dirname(__DIR__, 2),
+            realpath(__DIR__ . '/../../..'),
+            root_path() . 'vendor/zxf/captcha',
+        ];
+
+        foreach ($possiblePaths as $path) {
+            $normalizedPath = realpath($path);
+            if ($normalizedPath !== false && is_dir($normalizedPath . '/resources/assets')) {
+                return $normalizedPath;
+            }
+        }
+
+        return dirname(__DIR__, 2);
+    }
+
+    /**
+     * 输出静态资源文件
+     *
+     * @param string $path     相对资源目录的路径
      * @param string $mimeType MIME 类型
      *
      * @return \think\Response
      */
-    protected function outputStaticFile(string $path, string $mimeType): \think\Response
+    protected function outputAsset(string $path, string $mimeType): \think\Response
     {
-        $resourcePath = dirname(__DIR__, 2) . '/resources/assets';
-        $file = $resourcePath . '/' . $path;
+        $packageRoot = $this->getPackageRoot();
+        $file = $packageRoot . '/resources/assets/' . $path;
+        $realFile = realpath($file);
 
-        if (!file_exists($file)) {
-            return response('File not found', 404);
+        if ($realFile === false || !file_exists($realFile)) {
+            return response('File not found: ' . $path . ' (looked in: ' . $file . ')', 404, [
+                'Content-Type' => 'text/plain; charset=utf-8',
+            ]);
         }
 
-        $content = file_get_contents($file);
+        $content = file_get_contents($realFile);
         if ($content === false) {
-            return response('Failed to read file', 500);
+            return response('Failed to read file: ' . $path, 500, [
+                'Content-Type' => 'text/plain; charset=utf-8',
+            ]);
         }
 
         return response($content, 200, [
             'Content-Type' => $mimeType,
+            'Content-Length' => strlen($content),
             'Cache-Control' => 'public, max-age=86400',
             'Expires' => gmdate('D, d M Y H:i:s', time() + 86400) . ' GMT',
         ]);
@@ -172,12 +204,14 @@ class CaptchaService extends Service
         Validate::maker(function ($validate) {
             $validate->extend('xfCaptcha', function ($value) {
                 $captcha = app('xfCaptcha');
-                return $captcha->check($value);
+                $result = $captcha->verify(null, $value);
+                return $result['success'];
             }, '滑动验证码验证失败');
 
             $validate->extend('xfcaptcha', function ($value) {
                 $captcha = app('xfCaptcha');
-                return $captcha->check($value);
+                $result = $captcha->verify(null, $value);
+                return $result['success'];
             }, '滑动验证码验证失败');
         });
     }

@@ -15,6 +15,16 @@ namespace zxf\Captcha\Http;
 use zxf\Captcha\Captcha;
 
 /**
+ * 判断是否在 Laravel 环境中
+ */
+if (!function_exists('isLaravel')) {
+    function isLaravel(): bool
+    {
+        return class_exists('Illuminate\Http\Response');
+    }
+}
+
+/**
  * 验证码 HTTP 控制器
  *
  * 处理验证码相关的 HTTP 请求，包括：
@@ -88,24 +98,58 @@ class CaptchaController
     /**
      * 获取验证码图片
      *
-     * @return void
+     * @return mixed
      */
-    public function image(): void
+    public function image(): mixed
     {
         try {
+            // 确定图片格式
+            $format = $this->getOutputFormat();
+            $contentType = 'image/' . $format;
+
+            // 在 Laravel 中使用 makeRaw 获取二进制数据
+            if (isLaravel()) {
+                $imageData = $this->captcha->makeRaw();
+                return response($imageData, 200, [
+                    'Content-Type' => $contentType,
+                    'Cache-Control' => 'no-cache, no-store, must-revalidate',
+                    'Pragma' => 'no-cache',
+                    'Expires' => '0',
+                ]);
+            }
+
+            // 原生 PHP 环境直接输出
             $this->captcha->make();
+            return null;
         } catch (\Throwable $e) {
             // 输出错误图片
-            $this->outputErrorImage($e->getMessage());
+            return $this->outputErrorImage($e->getMessage());
         }
+    }
+
+    /**
+     * 获取图片输出格式
+     *
+     * @return string 图片格式（webp 或 png）
+     */
+    protected function getOutputFormat(): string
+    {
+        // 如果强制指定了格式或 WebP 不支持
+        if (isset($_GET['nowebp']) || !function_exists('imagewebp')) {
+            return 'png';
+        }
+
+        // 从配置中获取格式
+        $config = $this->getConfig();
+        return ($config['output_format'] ?? 'webp') === 'webp' ? 'webp' : 'png';
     }
 
     /**
      * 验证滑动结果
      *
-     * @return void
+     * @return mixed
      */
-    public function check(): void
+    public function check(): mixed
     {
         try {
             $result = $this->captcha->check();
@@ -116,13 +160,26 @@ class CaptchaController
                 'code' => $result ? 200 : 400,
             ];
 
+            // Laravel 环境返回 Response 对象
+            if (isLaravel()) {
+                return response()->json($response, $result ? 200 : 400);
+            }
+
             $this->jsonResponse($response, $result ? 200 : 400);
+            return null;
         } catch (\Throwable $e) {
-            $this->jsonResponse([
+            $response = [
                 'success' => false,
                 'message' => '验证出错：' . $e->getMessage(),
                 'code' => 500,
-            ], 500);
+            ];
+
+            if (isLaravel()) {
+                return response()->json($response, 500);
+            }
+
+            $this->jsonResponse($response, 500);
+            return null;
         }
     }
 
@@ -154,31 +211,31 @@ class CaptchaController
     /**
      * 获取 JS 文件
      *
-     * @return void
+     * @return mixed
      */
-    public function js(): void
+    public function js(): mixed
     {
-        $this->outputStaticFile('js/captcha.js', 'application/javascript');
+        return $this->outputStaticFile('js/captcha.js', 'application/javascript');
     }
 
     /**
      * 获取 CSS 文件
      *
-     * @return void
+     * @return mixed
      */
-    public function css(): void
+    public function css(): mixed
     {
-        $this->outputStaticFile('css/captcha.css', 'text/css');
+        return $this->outputStaticFile('css/captcha.css', 'text/css');
     }
 
     /**
      * 获取图标文件
      *
-     * @return void
+     * @return mixed
      */
-    public function icon(): void
+    public function icon(): mixed
     {
-        $this->outputStaticFile('images/icon.png', 'image/png');
+        return $this->outputStaticFile('images/icon.png', 'image/png');
     }
 
     /**
@@ -187,23 +244,32 @@ class CaptchaController
      * @param string $path     相对资源目录的路径
      * @param string $mimeType MIME 类型
      *
-     * @return void
+     * @return mixed 返回 Response 对象或 void
      */
-    protected function outputStaticFile(string $path, string $mimeType): void
+    protected function outputStaticFile(string $path, string $mimeType): mixed
     {
         $file = $this->resourcePath . '/' . $path;
 
         if (!file_exists($file)) {
-            $this->sendError('File not found', 404);
-            return;
+            return $this->sendError('File not found', 404);
         }
 
         $content = file_get_contents($file);
         if ($content === false) {
-            $this->sendError('Failed to read file', 500);
-            return;
+            return $this->sendError('Failed to read file', 500);
         }
 
+        // Laravel 环境：返回 Response 对象
+        if (isLaravel()) {
+            return response($content, 200, [
+                'Content-Type' => $mimeType,
+                'Content-Length' => strlen($content),
+                'Cache-Control' => 'public, max-age=86400',
+                'Expires' => gmdate('D, d M Y H:i:s', time() + 86400) . ' GMT',
+            ]);
+        }
+
+        // 原生 PHP 环境：直接输出
         // 清理输出缓冲区
         while (ob_get_level() > 0) {
             ob_end_clean();
@@ -218,6 +284,7 @@ class CaptchaController
         }
 
         echo $content;
+        return null;
     }
 
     /**
@@ -246,22 +313,17 @@ class CaptchaController
      *
      * @param string $message 错误信息
      *
-     * @return void
+     * @return mixed
      */
-    protected function outputErrorImage(string $message): void
+    protected function outputErrorImage(string $message): mixed
     {
-        // 清理输出缓冲区
-        while (ob_get_level() > 0) {
-            ob_end_clean();
-        }
-
         // 创建简单的错误提示图片
         $width = 240;
         $height = 150;
         $image = imagecreatetruecolor($width, $height);
 
         if ($image === false) {
-            return;
+            return $this->sendError('Failed to create image', 500);
         }
 
         // 背景色（浅红色）
@@ -279,11 +341,30 @@ class CaptchaController
             $y += 16;
         }
 
+        // 在 Laravel 环境中返回 Response
+        if (isLaravel()) {
+            ob_start();
+            imagepng($image);
+            $imageData = ob_get_clean();
+            imagedestroy($image);
+
+            return response($imageData, 200, [
+                'Content-Type' => 'image/png',
+                'Cache-Control' => 'no-cache, no-store, must-revalidate',
+            ]);
+        }
+
+        // 原生 PHP 环境直接输出
+        while (ob_get_level() > 0) {
+            ob_end_clean();
+        }
+
         if (!headers_sent()) {
             header('Content-Type: image/png');
         }
 
         imagepng($image);
         imagedestroy($image);
+        return null;
     }
 }

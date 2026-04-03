@@ -19,8 +19,8 @@
         "ext-json": "*"
     },
     "suggest": {
-        "laravel/framework": "如需在 Laravel 中使用，请安装 Laravel 框架",
-        "topthink/framework": "如需在 ThinkPHP 中使用，请安装 ThinkPHP 框架"
+        "laravel/framework": "如需在 Laravel 中使用，请安装 Laravel 11+ 框架 (requires ^11.0)",
+        "topthink/framework": "如需在 ThinkPHP 中使用，请安装 ThinkPHP 8+ 框架 (requires ^8.0)"
     },
     "autoload": {
         "psr-4": {
@@ -34,6 +34,9 @@
         "psr-4": {
             "zxf\\Captcha\\Tests\\": "tests/"
         }
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^10.0"
     },
     "extra": {
         "laravel": {

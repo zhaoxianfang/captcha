@@ -41,7 +41,13 @@ class Adapter
      */
     public function __construct(array $config = [])
     {
-        $defaultConfig = require dirname(__DIR__, 2) . '/config/xf_captcha.php';
+        $configFile = dirname(__DIR__, 2) . '/config/xf_captcha.php';
+        $defaultConfig = [];
+
+        if (file_exists($configFile)) {
+            $defaultConfig = require $configFile;
+        }
+
         $this->config = array_merge($defaultConfig, $config);
         $this->routePrefix = $this->config['route_prefix'] ?? 'captcha';
     }
@@ -196,10 +202,17 @@ class Adapter
             return;
         }
 
-        header('Content-Type: ' . $mimeType);
-        header('Content-Length: ' . strlen($content));
-        header('Cache-Control: public, max-age=86400');
-        header('Expires: ' . gmdate('D, d M Y H:i:s', time() + 86400) . ' GMT');
+        // 清理输出缓冲区
+        while (ob_get_level() > 0) {
+            ob_end_clean();
+        }
+
+        if (!headers_sent()) {
+            header('Content-Type: ' . $mimeType);
+            header('Content-Length: ' . strlen($content));
+            header('Cache-Control: public, max-age=86400');
+            header('Expires: ' . gmdate('D, d M Y H:i:s', time() + 86400) . ' GMT');
+        }
 
         echo $content;
     }
