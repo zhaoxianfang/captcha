@@ -7,7 +7,6 @@
  * 说明其用途、使用场景和推荐配置。
  *
  * @package     zxf\Captcha
- * @author      zhaoxianfang <zhaoxianfang@163.com>
  * @license     MIT
  */
 

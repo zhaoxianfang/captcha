@@ -35,7 +35,7 @@
 <script src="{{ route('xf-captcha.js') }}"></script>
 <script>
     document.addEventListener('DOMContentLoaded', function() {
-        xfCaptcha.init({
+        var captcha = xfCaptcha.init({
             handleDom: '.{{ $elementId }}',
             getImgUrl: '{{ route('xf-captcha.image') }}',
             checkUrl: '{{ route('xf-captcha.check') }}',
@@ -49,17 +49,16 @@
             theme: '{{ $finalTheme }}',
             inputName: '{{ $finalInputName }}',
             autoInsertInput: {{ $finalAutoInsertInput }}
-        })
+        });
         @if(isset($onSuccess))
-        .onSuccess({{ $onSuccess }})
+        captcha.onSuccess({{ $onSuccess }});
         @endif
         @if(isset($onFail))
-        .onFail({{ $onFail }})
+        captcha.onFail({{ $onFail }});
         @endif
         @if(isset($onClose))
-        .onClose({{ $onClose }})
+        captcha.onClose({{ $onClose }});
         @endif
-        ;
     });
 </script>
 @endpush

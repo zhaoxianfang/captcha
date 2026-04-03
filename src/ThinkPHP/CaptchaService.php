@@ -4,7 +4,6 @@
  * zxf/captcha - ThinkPHP 8+ 服务类
  *
  * @package     zxf\Captcha\ThinkPHP
- * @author      zhaoxianfang <zhaoxianfang@163.com>
  * @license     MIT
  */
 
@@ -20,8 +19,6 @@ use zxf\Captcha\Captcha;
 /**
  * ThinkPHP 8+ 验证码服务类
  *
- * @author zhaoxianfang
- * @since  2.0.0
  */
 class CaptchaService extends Service
 {

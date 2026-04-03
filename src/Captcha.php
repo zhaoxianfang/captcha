@@ -4,9 +4,8 @@
  * zxf/captcha - 高性能滑动验证码 PHP 扩展包
  *
  * @package     zxf\Captcha
- * @author      zhaoxianfang <zhaoxianfang@163.com>
  * @license     MIT
- * @version     2.0.0
+ * @version     1.0.0
  */
 
 declare(strict_types=1);
@@ -23,8 +22,7 @@ use InvalidArgumentException;
  * 该类负责生成滑动验证码图片、验证用户滑动结果等核心功能
  * 支持自定义背景图片、滑块样式、容错精度等配置
  *
- * @author zhaoxianfang
- * @since  2.0.0
+ * @since  1.0.0
  */
 class Captcha
 {

@@ -4,7 +4,6 @@
  * zxf/captcha - 辅助函数
  *
  * @package     zxf\Captcha
- * @author      zhaoxianfang <zhaoxianfang@163.com>
  * @license     MIT
  */
 
