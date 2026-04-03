@@ -27,11 +27,7 @@
 
 <div class="xf-captcha {{ $elementId }}" {!! $attributes ?? '' !!}></div>
 
-@push('styles')
 <link rel="stylesheet" href="{{ route('xf-captcha.css') }}">
-@endpush
-
-@push('scripts')
 <script src="{{ route('xf-captcha.js') }}"></script>
 <script>
     document.addEventListener('DOMContentLoaded', function() {
@@ -61,4 +57,3 @@
         @endif
     });
 </script>
-@endpush

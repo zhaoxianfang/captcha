@@ -4,6 +4,7 @@
  * zxf/captcha - 通用框架适配器
  *
  * @package     zxf\Captcha\Generic
+ * @author      zhaoxianfang <zhaoxianfang@163.com>
  * @license     MIT
  */
 
@@ -18,7 +19,8 @@ use zxf\Captcha\Captcha;
  *
  * 用于在不支持服务提供者的框架或原生 PHP 中使用验证码
  *
- * @since  1.0.0
+ * @author zhaoxianfang
+ * @since  2.0.0
  */
 class Adapter
 {

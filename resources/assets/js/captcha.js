@@ -819,7 +819,7 @@
                         <div class="captcha_slide_text">${xfCaptcha._options.slideText}</div>
                     </div>
                     <div class="captcha_tools">
-                        <a href="http://yoc.cn" target="_blank" class="captcha_copyright" title="插件来源">yoc.cn</a>
+                        <a href="http://yoc.cn" target="_blank" class="captcha_copyright" title="来源 yoc.cn">© yoc.cn</a>
                         <div class="captcha_tools_actions">
                             ${xfCaptcha._options.showRefresh ? '<div class="captcha_refresh" title="刷新"></div>' : ''}
                             ${xfCaptcha._options.showClose ? '<div class="captcha_close" title="关闭"></div>' : ''}

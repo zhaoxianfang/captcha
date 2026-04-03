@@ -4,6 +4,7 @@
  * zxf/captcha - HTTP 控制器
  *
  * @package     zxf\Captcha\Http
+ * @author      zhaoxianfang <zhaoxianfang@163.com>
  * @license     MIT
  */
 
@@ -31,6 +32,8 @@ if (!function_exists('isLaravel')) {
  * - 验证滑动结果
  * - 提供静态资源（JS、CSS、图标）
  *
+ * @author zhaoxianfang
+ * @since  2.0.0
  */
 class CaptchaController
 {

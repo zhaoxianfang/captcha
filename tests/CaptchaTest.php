@@ -4,6 +4,7 @@
  * zxf/captcha - 单元测试
  *
  * @package     zxf\Captcha\Tests
+ * @author      zhaoxianfang <zhaoxianfang@163.com>
  * @license     MIT
  */
 

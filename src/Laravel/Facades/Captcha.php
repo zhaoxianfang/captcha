@@ -4,6 +4,7 @@
  * zxf/captcha - Laravel Facade
  *
  * @package     zxf\Captcha\Laravel\Facades
+ * @author      zhaoxianfang <zhaoxianfang@163.com>
  * @license     MIT
  */
 
@@ -29,6 +30,9 @@ use Illuminate\Support\Facades\Facade;
  * @method static \zxf\Captcha\Captcha setConfigs(array $config)
  *
  * @see \zxf\Captcha\Captcha
+ *
+ * @author zhaoxianfang
+ * @since  2.0.0
  */
 class Captcha extends Facade
 {
