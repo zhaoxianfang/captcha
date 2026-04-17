@@ -10,7 +10,12 @@
         'theme' => 'auto',
         'inputName' => 'xf_captcha_token',
         'placeholder' => '点击按钮进行验证',
-        'onSuccess' => 'function() { console.log("验证成功"); }'
+        'width' => '100%',
+        'height' => '40px',
+        'borderRadius' => '4px',
+        'onSuccess' => 'function(token) { console.log("验证成功", token); }',
+        'onFail' => 'function() { console.log("验证失败"); }',
+        'onClose' => 'function() { console.log("关闭"); }'
     ])
 --}}
 
@@ -23,9 +28,14 @@
     $finalTheme = $theme ?? config('xf_captcha.frontend.theme', 'auto');
     $finalInputName = $inputName ?? config('xf_captcha.frontend.input_name', 'xf_captcha_token');
     $finalAutoInsertInput = var_export($autoInsertInput ?? config('xf_captcha.frontend.auto_insert_input', true), true);
+
+    $inlineStyle = '';
+    if (!empty($width)) $inlineStyle .= 'width:' . $width . ';';
+    if (!empty($height)) $inlineStyle .= 'height:' . $height . ';';
+    if (!empty($borderRadius)) $inlineStyle .= 'border-radius:' . $borderRadius . ';';
 @endphp
 
-<div class="xf-captcha {{ $elementId }}" {!! $attributes ?? '' !!}></div>
+<div class="xf-captcha {{ $elementId }}" {!! $attributes ?? '' !!} {!! $inlineStyle ? 'style="' . $inlineStyle . '"' : '' !!}></div>
 
 <link rel="stylesheet" href="{{ route('xf-captcha.css') }}">
 <script src="{{ route('xf-captcha.js') }}"></script>
@@ -46,14 +56,14 @@
             inputName: '{{ $finalInputName }}',
             autoInsertInput: {{ $finalAutoInsertInput }}
         });
-        @if(isset($onSuccess))
-        captcha.onSuccess({{ $onSuccess }});
+        @if(isset($onSuccess) && trim($onSuccess) !== '')
+        captcha.onSuccess({!! $onSuccess !!});
         @endif
-        @if(isset($onFail))
-        captcha.onFail({{ $onFail }});
+        @if(isset($onFail) && trim($onFail) !== '')
+        captcha.onFail({!! $onFail !!});
         @endif
-        @if(isset($onClose))
-        captcha.onClose({{ $onClose }});
+        @if(isset($onClose) && trim($onClose) !== '')
+        captcha.onClose({!! $onClose !!});
         @endif
     });
 </script>

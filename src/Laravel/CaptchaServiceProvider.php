@@ -270,17 +270,21 @@ class CaptchaServiceProvider extends ServiceProvider
      */
     protected function registerValidator(): void
     {
-        Validator::extend('xfCaptcha', function ($attribute, $value, $parameters, $validator) {
+        $extend = function ($attribute, $value, $parameters, $validator) {
             $captcha = app('xfCaptcha');
-            $result = $captcha->verify(null, $value);
-            return $result['success'];
-        }, '滑动验证码验证失败');
+            $verifyMode = $captcha->getConfig('verify_mode', Captcha::VERIFY_DUAL);
 
-        Validator::extend('xfcaptcha', function ($attribute, $value, $parameters, $validator) {
-            $captcha = app('xfCaptcha');
+            // 双重验证模式下，表单提交必须提供有效的 token，防止通过 captcha_r 绕过二次验证
+            if ($verifyMode === Captcha::VERIFY_DUAL && empty($value)) {
+                return false;
+            }
+
             $result = $captcha->verify(null, $value);
             return $result['success'];
-        }, '滑动验证码验证失败');
+        };
+
+        Validator::extend('xfCaptcha', $extend, '滑动验证码验证失败');
+        Validator::extend('xfcaptcha', $extend, '滑动验证码验证失败');
     }
 
     /**

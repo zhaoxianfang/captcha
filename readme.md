@@ -62,7 +62,7 @@ Laravel 11 中引入 xfCaptcha 有三种方式：
 
 **方式一：使用 Blade 组件（推荐）**
 
-使用 `@include` 引入 Blade 组件，会自动加载 CSS 和 JS 资源：
+使用 `@include` 引入 Blade 组件，会自动在当前位置加载 CSS 和 JS 资源：
 
 ```blade
 <!DOCTYPE html>
@@ -73,24 +73,30 @@ Laravel 11 中引入 xfCaptcha 有三种方式：
 <body>
     <form method="POST" action="/login" id="loginForm">
         @csrf
-        
+
         <!-- 使用 Blade 组件 - 最简单的方式 -->
         @include('xf-captcha::captcha', [
             'selector' => '.xf-captcha',
             'placeholder' => '点击完成验证',
             'inputName' => 'xf_captcha',
+            'width' => '100%',
+            'height' => '40px',
+            'borderRadius' => '4px',
+            'onSuccess' => 'function(token) { console.log("验证成功", token); }',
+            'onFail' => 'function() { console.log("验证失败"); }',
+            'onClose' => 'function() { console.log("弹窗关闭"); }',
         ])
-        
+
         <div class="xf-captcha"></div>
-        
+
         <button type="submit">提交</button>
     </form>
-    
+
     <script>
         // 表单提交示例
         document.getElementById('loginForm').addEventListener('submit', function(e) {
             e.preventDefault();
-            
+
             fetch('/login', {
                 method: 'POST',
                 body: new FormData(this)
@@ -112,9 +118,11 @@ Laravel 11 中引入 xfCaptcha 有三种方式：
 </html>
 ```
 
+> **注意**：Blade 组件会在 `@include` 的位置直接输出 `<link>` 和 `<script>` 标签。如果你需要将 JS 放在页面底部，请使用方式二手动引入资源。
+
 **方式二：手动引入资源（需要自定义时）**
 
-如果需要更多自定义控制，可以手动引入 CSS 和 JS：
+如果需要更多自定义控制（例如把 JS 放到页面底部），可以手动引入 CSS 和 JS：
 
 ```blade
 <!DOCTYPE html>
@@ -127,14 +135,14 @@ Laravel 11 中引入 xfCaptcha 有三种方式：
 <body>
     <form method="POST" action="/login" id="loginForm">
         @csrf
-        
+
         <!-- 验证码容器 -->
         <div id="my-captcha"></div>
-        
+
         <button type="submit">提交</button>
     </form>
-    
-    <!-- 手动引入 JS -->
+
+    <!-- 在底部手动引入 JS -->
     <script src="{{ route('xf-captcha.js') }}"></script>
     <script>
         // 手动初始化
@@ -146,11 +154,11 @@ Laravel 11 中引入 xfCaptcha 有三种方式：
             inputName: 'xf_captcha',
             theme: 'auto'
         });
-        
+
         // 表单提交
         document.getElementById('loginForm').addEventListener('submit', function(e) {
             e.preventDefault();
-            
+
             fetch('/login', {
                 method: 'POST',
                 body: new FormData(this)
@@ -170,48 +178,7 @@ Laravel 11 中引入 xfCaptcha 有三种方式：
 </html>
 ```
 
-**方式三：使用 @stack 和 @push（需要控制资源加载位置时）**
-
-如果需要在特定位置（如页面底部）加载 JS，可以使用 @stack：
-
-```blade
-<!DOCTYPE html>
-<html>
-<head>
-    <title>验证码演示</title>
-    <!-- 在头部加载 CSS -->
-    <link rel="stylesheet" href="{{ route('xf-captcha.css') }}">
-</head>
-<body>
-    <form method="POST" action="/login" id="loginForm">
-        @csrf
-        
-        @include('xf-captcha::captcha', [
-            'selector' => '.xf-captcha',
-            'placeholder' => '点击完成验证',
-            'inputName' => 'xf_captcha',
-        ])
-        
-        <div class="xf-captcha"></div>
-        
-        <button type="submit">提交</button>
-    </form>
-    
-    <!-- 在底部加载所有 JS -->
-    @stack('scripts')
-    
-    <script>
-        // 表单提交逻辑
-        document.getElementById('loginForm').addEventListener('submit', function(e) {
-            e.preventDefault();
-            // ... 提交逻辑
-        });
-    </script>
-</body>
-</html>
-```
-
-**方式四：使用资源混合（Laravel Mix/Vite）**
+**方式三：使用资源混合（Laravel Mix/Vite）**
 
 如果使用 Laravel Mix 或 Vite 构建前端资源：
 
@@ -249,6 +216,31 @@ document.addEventListener('DOMContentLoaded', function() {
 </body>
 </html>
 ```
+
+#### Blade 组件参数说明
+
+使用 `@include('xf-captcha::captcha', [...])` 时可以传入以下参数：
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `selector` | string | 自动生成 | 触发元素的选择器 |
+| `placeholder` | string | `点击按钮进行验证` | 触发按钮的占位文字 |
+| `slideText` | string | `拖动左边滑块完成上方拼图` | 滑动提示文字 |
+| `successText` | string | `✓ 验证成功` | 验证成功提示 |
+| `failText` | string | `验证失败，请重试` | 验证失败提示 |
+| `inputName` | string | `xf_captcha_token` | 隐藏输入框的 `name` 属性 |
+| `autoInsertInput` | bool | `true` | 验证成功后是否自动插入隐藏输入框 |
+| `theme` | string | `auto` | 主题：`light`、`dark`、`auto` |
+| `showClose` | bool | `true` | 是否显示关闭按钮 |
+| `showRefresh` | bool | `true` | 是否显示刷新按钮 |
+| `showRipple` | bool | `true` | 是否显示水波纹效果 |
+| `width` | string | — | 自定义触发按钮宽度（如 `100%`、`260px`） |
+| `height` | string | — | 自定义触发按钮高度（如 `40px`） |
+| `borderRadius` | string | — | 自定义触发按钮圆角（如 `4px`） |
+| `onSuccess` | string | — | 验证成功回调函数字符串，如 `function(token) { ... }` |
+| `onFail` | string | — | 验证失败回调函数字符串 |
+| `onClose` | string | — | 弹窗关闭回调函数字符串 |
+| `attributes` | string | — | 额外的 HTML 属性字符串 |
 
 #### 4. 后端验证
 
@@ -762,6 +754,18 @@ MIT License
 zhaoxianfang <zhaoxianfang@163.com>
 
 ## 📝 更新日志
+
+### v2.1.0
+- **安全修复**：修复 Blade 组件回调解析问题，避免组件失效
+- **安全修复**：修复 Laravel/ThinkPHP 验证器扩展漏洞，双重验证模式下空 token 不再绕过二次验证
+- **安全修复**：修复前端重新打开弹窗时旧 token 未被清理的问题，关闭后再次验证不会再被服务端误判为成功
+- **安全修复**：首次验证请求由 GET 改为 POST，避免 `captcha_r` 暴露在 URL 中
+- **功能增强**：Blade 组件新增 `width`、`height`、`borderRadius` 参数支持
+- **功能增强**：JS API 补齐 `getToken()` 和 `setTheme()` 方法
+- **体验优化**：验证成功自动关闭弹窗的定时器现在可被正确取消，避免干扰新一轮验证
+- **体验优化**：验证失败时同步清理前端 token 和隐藏输入框
+- **体验优化**：图片加载失败提示更加友好
+- **文档完善**：补充 Blade 组件完整参数说明表和各种资源引入方式
 
 ### v2.0.0
 - 重构验证逻辑，支持三种验证模式

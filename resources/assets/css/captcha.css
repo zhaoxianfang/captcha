@@ -296,6 +296,11 @@
     letter-spacing: 1px;
 }
 
+.captcha_loading_error::before,
+.captcha_loading_error::after {
+    display: none !important;
+}
+
 @keyframes captcha-spin {
     to { transform: rotate(360deg); }
 }
@@ -350,9 +355,9 @@
 .captcha_msg_error,
 .captcha_msg_ok {
     position: absolute;
-    top: 125px;
-    left: 12px;
-    right: 12px;
+    top: 130px;
+    left: 10px;
+    right: 8px;
     height: 28px;
     line-height: 28px;
     text-align: center;
