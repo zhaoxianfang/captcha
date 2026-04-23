@@ -52,13 +52,15 @@ if (!function_exists('xf_captcha')) {
 
 if (!function_exists('xf_captcha_check')) {
     /**
-     * 验证滑动验证码
+     * 验证验证码
      *
-     * @param string|int $offset 用户滑动的偏移量，不传则从请求中获取
+     * @param string|int  $offset      用户滑动的偏移量（滑动验证码使用）
+     * @param string|null $token       验证令牌（双重验证模式使用）
+     * @param array       $clickPoints 用户点击的坐标点（点击验证码使用）
      *
      * @return bool 验证是否通过
      */
-    function xf_captcha_check(string|int $offset = ''): bool
+    function xf_captcha_check(string|int $offset = '', ?string $token = null, array $clickPoints = []): bool
     {
         $config = [];
         if (function_exists('config')) {
@@ -66,7 +68,8 @@ if (!function_exists('xf_captcha_check')) {
         }
 
         $captcha = new Captcha($config);
-        return $captcha->check($offset);
+        $result = $captcha->verify($offset ?: null, $token, $clickPoints);
+        return $result['success'];
     }
 }
 
@@ -129,20 +132,21 @@ if (!function_exists('xf_captcha_html')) {
         );
 
         // 生成 JavaScript 配置
+        $routePrefix = $config['route_prefix'] ?? 'xf_captcha';
         $jsConfig = json_encode([
             'handleDom' => $selector,
-            'getImgUrl' => $frontend['image_url'] ?? ($config['route_prefix'] ?? 'captcha') . '/image',
-            'checkUrl' => $frontend['check_url'] ?? ($config['route_prefix'] ?? 'captcha') . '/check',
+            'dataUrl' => $frontend['data_url'] ?? '/' . $routePrefix . '/data',
+            'imageUrl' => $frontend['image_url'] ?? '/' . $routePrefix . '/image',
+            'checkUrl' => $frontend['check_url'] ?? '/' . $routePrefix . '/check',
             'placeholder' => $frontend['placeholder'] ?? '点击按钮进行验证',
             'slideText' => $frontend['slide_text'] ?? '拖动左边滑块完成上方拼图',
+            'clickText' => $frontend['click_text'] ?? '请按照顺序点击图片中的文字',
             'successText' => $frontend['success_text'] ?? '✓ 验证成功',
             'failText' => $frontend['fail_text'] ?? '验证失败，请重试',
             'showClose' => $frontend['show_close'] ?? true,
             'showRefresh' => $frontend['show_refresh'] ?? true,
             'showRipple' => $frontend['show_ripple'] ?? true,
         ]);
-
-        $routePrefix = $config['route_prefix'] ?? 'captcha';
 
         return <<<HTML
 <div class="xf-captcha" id="xf-captcha-{$selector}"></div>
@@ -179,12 +183,15 @@ if (!function_exists('xf_captcha_script')) {
             ['handleDom' => $selector]
         );
 
+        $routePrefix = $config['route_prefix'] ?? 'xf_captcha';
         $jsConfig = json_encode([
             'handleDom' => $selector,
-            'getImgUrl' => $frontend['image_url'] ?? ($config['route_prefix'] ?? 'captcha') . '/image',
-            'checkUrl' => $frontend['check_url'] ?? ($config['route_prefix'] ?? 'captcha') . '/check',
+            'dataUrl' => $frontend['data_url'] ?? '/' . $routePrefix . '/data',
+            'imageUrl' => $frontend['image_url'] ?? '/' . $routePrefix . '/image',
+            'checkUrl' => $frontend['check_url'] ?? '/' . $routePrefix . '/check',
             'placeholder' => $frontend['placeholder'] ?? '点击按钮进行验证',
             'slideText' => $frontend['slide_text'] ?? '拖动左边滑块完成上方拼图',
+            'clickText' => $frontend['click_text'] ?? '请按照顺序点击图片中的文字',
             'successText' => $frontend['success_text'] ?? '✓ 验证成功',
             'failText' => $frontend['fail_text'] ?? '验证失败，请重试',
             'showClose' => $frontend['show_close'] ?? true,

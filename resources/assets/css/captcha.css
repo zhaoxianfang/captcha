@@ -562,7 +562,7 @@
 
 /* 点击模式下的画布样式 */
 .captcha_div[data-type="click"] .captcha_canvas_bg {
-    cursor: crosshair;
+    cursor: pointer;
     pointer-events: auto;
     border: 2px solid #e6f7ff;
     box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.2);
@@ -573,14 +573,20 @@
     box-shadow: 0 0 0 3px rgba(24, 144, 255, 0.3);
 }
 
-/* 点击模式下的滑动条区域 - 显示提示文字 */
+/* 点击模式下完全隐藏滑块，仅保留提示文字区域 */
 .captcha_div[data-type="click"] .captcha_slide {
     display: block !important;
-    background: linear-gradient(135deg, #e6f7ff 0%, #f0f5ff 100%);
-    border-color: #1890ff;
+    background: transparent;
+    border: none;
+    box-shadow: none;
     height: auto;
-    min-height: 38px;
-    padding: 8px;
+    min-height: 0;
+    padding: 6px 0;
+    border-radius: 6px;
+}
+
+.captcha_div[data-type="click"] .captcha_slide_block {
+    display: none !important;
 }
 
 .captcha_div[data-type="click"] .captcha_slide_text {
@@ -589,12 +595,13 @@
     right: 0;
     height: auto;
     line-height: 1.5;
-    padding: 4px 8px;
+    padding: 6px 10px;
     font-size: 13px;
     color: #1890ff;
     text-align: center;
-    background: rgba(24, 144, 255, 0.05);
-    border-radius: 4px;
+    background: rgba(24, 144, 255, 0.06);
+    border-radius: 6px;
+    font-weight: 500;
 }
 
 .captcha_div[data-type="click"] .captcha_slide_text strong {

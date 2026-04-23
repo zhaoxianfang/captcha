@@ -102,8 +102,8 @@ class CaptchaTest extends TestCase
         $captcha = new Captcha();
 
         // 没有生成验证码直接验证应该失败
-        $result = $captcha->check(100);
-        $this->assertFalse($result);
+        $result = $captcha->verify(100);
+        $this->assertFalse($result['success']);
     }
 
     /**
@@ -114,13 +114,33 @@ class CaptchaTest extends TestCase
         $captcha = new Captcha();
 
         // 非数字输入应该失败
-        $this->assertFalse($captcha->check('invalid'));
-        $this->assertFalse($captcha->check('abc123'));
-        $this->assertFalse($captcha->check(''));
+        $this->assertFalse($captcha->verify('invalid')['success']);
+        $this->assertFalse($captcha->verify('abc123')['success']);
+        $this->assertFalse($captcha->verify('')['success']);
 
         // 超出范围的输入应该失败
-        $this->assertFalse($captcha->check(-1));
-        $this->assertFalse($captcha->check(9999));
+        $this->assertFalse($captcha->verify(-1)['success']);
+        $this->assertFalse($captcha->verify(9999)['success']);
+    }
+
+    /**
+     * 测试点击验证码配置
+     */
+    public function testClickCaptchaConfig(): void
+    {
+        $captcha = new Captcha([
+            'captcha_type' => Captcha::TYPE_CLICK,
+            'click' => [
+                'char_count' => 3,
+                'font_size' => 28,
+                'text_rotate' => true,
+                'text_bg_overlay' => true,
+            ],
+        ]);
+
+        $this->assertEquals(Captcha::TYPE_CLICK, $captcha->getConfig('captcha_type'));
+        $this->assertEquals(3, $captcha->getConfig('click.char_count'));
+        $this->assertEquals(28, $captcha->getConfig('click.font_size'));
     }
 
     /**

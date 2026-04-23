@@ -69,7 +69,42 @@ class CaptchaService extends Service
         /** @var Route $route */
         $route = $this->app->route;
 
-        // 验证码图片
+        // 验证码数据接口（支持滑动和点击验证码）
+        $route->get($prefix . '/data', function () {
+            try {
+                /** @var Captcha $captcha */
+                $captcha = app('xfCaptcha');
+                $isRefresh = request()->has('refresh') || request()->has('_s');
+                $result = $captcha->makeData([], $isRefresh);
+
+                $response = [
+                    'success' => true,
+                    'code' => 200,
+                    'type' => $result['type'],
+                    'image_base64' => $result['image_base64'],
+                    'hint' => $result['hint'],
+                    'bg_width' => $result['bg_width'],
+                    'bg_height' => $result['bg_height'],
+                ];
+
+                if ($result['type'] === Captcha::TYPE_SLIDE) {
+                    $response['mark_width'] = $result['mark_width'];
+                    $response['mark_height'] = $result['mark_height'];
+                } else {
+                    $response['char_count'] = $result['char_count'];
+                }
+
+                return json($response);
+            } catch (\Throwable $e) {
+                return json([
+                    'success' => false,
+                    'message' => '生成验证码失败：' . $e->getMessage(),
+                    'code' => 500,
+                ], 500);
+            }
+        });
+
+        // 验证码图片（向后兼容）
         $route->get($prefix . '/image', function () {
             try {
                 /** @var Captcha $captcha */
@@ -116,16 +151,27 @@ class CaptchaService extends Service
             // 获取请求参数
             $offset = request()->get('captcha_r') ?? request()->post('captcha_r');
             $token = request()->get('xf_captcha_token') ?? request()->post('xf_captcha_token');
+            $clickPoints = request()->get('click_points') ?? request()->post('click_points');
+
+            // 解析点击坐标
+            if (is_string($clickPoints)) {
+                $clickPoints = json_decode($clickPoints, true) ?: [];
+            }
 
             // 执行验证
-            $result = $captcha->verify($offset, $token);
+            $result = $captcha->verify($offset, $token, $clickPoints);
 
-            return json([
+            $response = [
                 'success' => $result['success'],
                 'message' => $result['message'],
                 'code' => $result['success'] ? 200 : 400,
-                'token' => $result['token'],
-            ]);
+            ];
+
+            if (!empty($result['token'])) {
+                $response['token'] = $result['token'];
+            }
+
+            return json($response);
         } catch (\Throwable $e) {
             return json([
                 'success' => false,

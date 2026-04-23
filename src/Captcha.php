@@ -143,6 +143,11 @@ class Captcha
     private array $config = [];
 
     /**
+     * 请求指纹（用于安全追踪）
+     */
+    private string $requestFingerprint = '';
+
+    /**
      * Session 键名 - 存储验证码正确位置
      */
     private string $sessionKeyR = 'captcha_r';
@@ -176,6 +181,16 @@ class Captcha
      * Session 键名 - 存储点击验证码数据
      */
     private string $sessionKeyClickData = 'captcha_click_data';
+
+    /**
+     * Session 键名 - 存储请求指纹
+     */
+    private string $sessionKeyFingerprint = 'captcha_fingerprint';
+
+    /**
+     * Session 键名 - 存储生成时间戳
+     */
+    private string $sessionKeyCreatedAt = 'captcha_created_at';
 
     /**
      * 是否使用模拟Session（CLI模式）
@@ -286,18 +301,24 @@ class Captcha
                 'char_count' => 4,
                 // 点击容错范围（像素）
                 'fault_tolerance' => 25,
-                // 字符库（留空则自动判断）
+                // 字符库（留空则自动判断：优先中文+符号混合）
                 'chars' => [],
-                // 中文字体路径
+                // 中文字体路径（支持中文点击验证推荐配置）
                 'font_path' => '',
-                // 文字大小
-                'font_size' => 20,
-                // 文字颜色 [R, G, B]
+                // 文字大小（推荐 24-32，确保清晰可见）
+                'font_size' => 26,
+                // 文字颜色 [R, G, B]（留空则随机）
                 'font_color' => [],
-                // 是否添加文字阴影/描边
+                // 是否添加文字阴影/描边增强可读性
                 'text_stroke' => true,
+                // 是否添加文字背景半透明遮罩增强可读性
+                'text_bg_overlay' => true,
                 // 提示文字模板
-                'hint_text' => '请按照顺序点击上方图片中的"%s"',
+                'hint_text' => '请依次点击：%s',
+                // 是否启用文字旋转（增强安全性）
+                'text_rotate' => true,
+                // 最大旋转角度（度数）
+                'max_rotate' => 30,
             ],
 
             // 滑动验证码配置
@@ -341,12 +362,29 @@ class Captcha
         $this->sessionKeyTokenExpire = $prefix . '_token_expire';
         $this->sessionKeyType = $prefix . '_type';
         $this->sessionKeyClickData = $prefix . '_click_data';
+        $this->sessionKeyFingerprint = $prefix . '_fingerprint';
+        $this->sessionKeyCreatedAt = $prefix . '_created_at';
+
+        // 生成请求指纹用于安全校验
+        $this->requestFingerprint = $this->generateFingerprint();
 
         // 修复图片路径
         $this->fixImagePaths();
 
         // 设置默认背景图片
         $this->defaultBgImages = $this->getBgImages();
+    }
+
+    /**
+     * 生成请求指纹
+     */
+    private function generateFingerprint(): string
+    {
+        $parts = [];
+        $parts[] = $_SERVER['HTTP_USER_AGENT'] ?? 'unknown';
+        $parts[] = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
+        $parts[] = $_SERVER['HTTP_ACCEPT_LANGUAGE'] ?? 'unknown';
+        return hash('sha256', implode('|', $parts));
     }
 
     /**
@@ -582,12 +620,14 @@ class Captcha
             // 存储点击位置数据到 Session
             $this->setSessionValue($this->sessionKeyClickData, $this->clickData);
             $this->setSessionValue($this->sessionKeyErr, 0);
+            $this->setSessionValue($this->sessionKeyFingerprint, $this->requestFingerprint);
+            $this->setSessionValue($this->sessionKeyCreatedAt, time());
 
             // 生成提示文字
             $clickConfig = $this->config['click'] ?? [];
-            $hintTemplate = $clickConfig['hint_text'] ?? '请按照顺序点击上方图片中的"%s"';
+            $hintTemplate = $clickConfig['hint_text'] ?? '请依次点击：%s';
             $chars = array_column($this->clickData, 'char');
-            $hint = sprintf($hintTemplate, implode('","', $chars));
+            $hint = sprintf($hintTemplate, implode(' → ', $chars));
 
             return [
                 'type' => self::TYPE_CLICK,
@@ -746,30 +786,22 @@ class Captcha
             return $customChars;
         }
 
-        // 检查是否配置了中文字体
-        $fontPath = $clickConfig['font_path'] ?? '';
-        if (!empty($fontPath) && file_exists($fontPath)) {
-            // 使用常见中文字符
-            $chineseChars = [
-                '天', '地', '人', '和', '大', '小', '多', '少', '上', '下',
-                '左', '右', '前', '后', '里', '外', '中', '国', '兴', '安',
-                '平', '康', '福', '喜', '乐', '美', '好', '真', '善', '诚',
-                '爱', '友', '家', '春', '夏', '秋', '冬', '风', '雨', '雪',
-                '山', '水', '花', '草', '树', '鸟', '鱼', '虫', '日', '月',
-                '星', '云', '红', '黄', '蓝', '绿', '白', '黑', '金', '木',
-                '水', '火', '土', '东', '西', '南', '北', '高', '低', '长',
-                '短', '圆', '方', '正', '直', '弯', '明', '暗', '清', '浊',
-            ];
-            shuffle($chineseChars);
-            return $chineseChars;
-        }
-
-        // 无中文字体时使用数字和符号
-        return array_merge(
-            range('A', 'Z'),
-            range('0', '9'),
-            ['★', '♥', '♦', '♣', '♠', '◎', '●', '■', '▲', '▼']
-        );
+        // 默认使用中文汉字 + 小图标符号混合库，增强可读性和趣味性
+        $mixedChars = [
+            // 常见中文汉字（直观易辨认）
+            '天', '地', '人', '和', '大', '小', '多', '少', '上', '下',
+            '左', '右', '前', '后', '里', '外', '中', '心', '口', '手',
+            '平', '安', '福', '喜', '乐', '美', '好', '真', '善', '诚',
+            '爱', '友', '家', '春', '夏', '秋', '冬', '风', '雨', '雪',
+            '山', '水', '花', '草', '树', '鸟', '鱼', '虫', '日', '月',
+            '星', '云', '红', '黄', '蓝', '绿', '白', '黑', '金', '木',
+            '东', '西', '南', '北', '高', '低', '长', '短', '圆', '方',
+            // 小图标符号（醒目易识别）
+            '★', '♥', '♦', '♣', '♠', '◎', '●', '■', '▲', '▼',
+            '◇', '○', '□', '△', '▽', '✦', '✧', '✪', '✯', '✰',
+        ];
+        shuffle($mixedChars);
+        return $mixedChars;
     }
 
     /**
@@ -780,46 +812,77 @@ class Captcha
     private function createClickImage(): string
     {
         $clickConfig = $this->config['click'] ?? [];
-        $fontSize = (int) ($clickConfig['font_size'] ?? 20);
+        $fontSize = (int) ($clickConfig['font_size'] ?? 26);
         $textStroke = (bool) ($clickConfig['text_stroke'] ?? true);
+        $textBgOverlay = (bool) ($clickConfig['text_bg_overlay'] ?? true);
         $fontPath = $clickConfig['font_path'] ?? '';
         $fontColor = $clickConfig['font_color'] ?? [];
+        $textRotate = (bool) ($clickConfig['text_rotate'] ?? true);
+        $maxRotate = (int) ($clickConfig['max_rotate'] ?? 30);
+
+        // 优先使用系统默认中文字体路径（常见路径）
+        if (empty($fontPath) || !file_exists($fontPath)) {
+            $fontPath = $this->findSystemFont();
+        }
+
+        $hasTtf = !empty($fontPath) && file_exists($fontPath);
 
         // 绘制每个字符
         foreach ($this->clickData as $data) {
             $x = $data['x'];
             $y = $data['y'];
             $char = $data['char'];
+            $rotateAngle = 0;
 
-            // 随机颜色
+            // 随机旋转角度（仅 TTF 字体支持）
+            if ($hasTtf && $textRotate) {
+                $rotateAngle = mt_rand(-$maxRotate, $maxRotate);
+            }
+
+            // 随机颜色（避免太浅或与背景相近的颜色）
             if (!empty($fontColor) && count($fontColor) >= 3) {
-                $color = imagecolorallocate(
-                    $this->imBg,
-                    $fontColor[0],
-                    $fontColor[1],
-                    $fontColor[2]
-                );
+                $color = imagecolorallocate($this->imBg, $fontColor[0], $fontColor[1], $fontColor[2]);
             } else {
-                // 随机颜色（避免太浅的颜色）
-                $r = mt_rand(0, 200);
-                $g = mt_rand(0, 200);
-                $b = mt_rand(0, 200);
+                $r = mt_rand(30, 210);
+                $g = mt_rand(30, 210);
+                $b = mt_rand(30, 210);
+                // 确保颜色有足够对比度（避免接近灰色）
+                if (abs($r - $g) < 20 && abs($g - $b) < 20) {
+                    $r = mt_rand(0, 100);
+                    $b = mt_rand(150, 255);
+                }
                 $color = imagecolorallocate($this->imBg, $r, $g, $b);
             }
 
-            // 如果有字体文件，使用 TrueType 字体
-            if (!empty($fontPath) && file_exists($fontPath)) {
-                // 添加描边/阴影效果增强可读性
+            if ($hasTtf) {
+                // 计算文字尺寸以绘制背景遮罩
+                $bbox = imagettfbbox($fontSize, $rotateAngle, $fontPath, $char);
+                if ($bbox !== false && $textBgOverlay) {
+                    $minX = min($bbox[0], $bbox[2], $bbox[4], $bbox[6]);
+                    $maxX = max($bbox[0], $bbox[2], $bbox[4], $bbox[6]);
+                    $minY = min($bbox[1], $bbox[3], $bbox[5], $bbox[7]);
+                    $maxY = max($bbox[1], $bbox[3], $bbox[5], $bbox[7]);
+                    $textW = $maxX - $minX;
+                    $textH = $maxY - $minY;
+
+                    // 绘制半透明圆形背景遮罩增强可读性
+                    $overlayRadius = max($textW, $textH) * 0.65;
+                    $overlayColor = imagecolorallocatealpha($this->imBg, 255, 255, 255, 100);
+                    imagefilledellipse($this->imBg, $x, $y - (int)($fontSize * 0.15), (int)($overlayRadius * 2.2), (int)($overlayRadius * 2.2), $overlayColor);
+                }
+
+                // 添加白色描边/阴影效果增强可读性
                 if ($textStroke) {
                     $strokeColor = imagecolorallocate($this->imBg, 255, 255, 255);
-                    for ($dx = -1; $dx <= 1; $dx++) {
-                        for ($dy = -1; $dy <= 1; $dy++) {
+                    for ($dx = -2; $dx <= 2; $dx++) {
+                        for ($dy = -2; $dy <= 2; $dy++) {
+                            if ($dx === 0 && $dy === 0) continue;
                             imagettftext(
                                 $this->imBg,
                                 $fontSize,
-                                0,
-                                $x + $dx - $fontSize / 2,
-                                $y + $dy + $fontSize / 2,
+                                $rotateAngle,
+                                (int) ($x + $dx - $fontSize * 0.4),
+                                (int) ($y + $dy + $fontSize * 0.35),
                                 $strokeColor,
                                 $fontPath,
                                 $char
@@ -831,16 +894,31 @@ class Captcha
                 imagettftext(
                     $this->imBg,
                     $fontSize,
-                    0,
-                    $x - $fontSize / 2,
-                    $y + $fontSize / 2,
+                    $rotateAngle,
+                    (int) ($x - $fontSize * 0.4),
+                    (int) ($y + $fontSize * 0.35),
                     $color,
                     $fontPath,
                     $char
                 );
             } else {
-                // 使用内置字体
-                $fontId = max(1, min(5, (int) ($fontSize / 4)));
+                // 使用内置字体时绘制背景遮罩
+                if ($textBgOverlay) {
+                    $overlayColor = imagecolorallocatealpha($this->imBg, 255, 255, 255, 100);
+                    imagefilledellipse($this->imBg, $x + 4, $y - 2, 28, 28, $overlayColor);
+                }
+
+                // 使用内置字体（尽量选大的）
+                $fontId = max(1, min(5, (int) ($fontSize / 3)));
+                // 简单描边效果
+                if ($textStroke) {
+                    $strokeColor = imagecolorallocate($this->imBg, 255, 255, 255);
+                    for ($dx = -1; $dx <= 1; $dx++) {
+                        for ($dy = -1; $dy <= 1; $dy++) {
+                            imagestring($this->imBg, $fontId, $x - 4 + $dx, $y - 8 + $dy, $char, $strokeColor);
+                        }
+                    }
+                }
                 imagestring($this->imBg, $fontId, $x - 4, $y - 8, $char, $color);
             }
         }
@@ -857,6 +935,37 @@ class Captcha
         $data = ob_get_clean();
 
         return $data ?: '';
+    }
+
+    /**
+     * 查找系统默认字体
+     */
+    private function findSystemFont(): string
+    {
+        $possiblePaths = [
+            // Windows
+            'C:/Windows/Fonts/simhei.ttf',
+            'C:/Windows/Fonts/simsun.ttc',
+            'C:/Windows/Fonts/msyh.ttc',
+            'C:/Windows/Fonts/msyhbd.ttc',
+            // Linux
+            '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc',
+            '/usr/share/fonts/truetype/wqy/wqy-microhei.ttc',
+            '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
+            '/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf',
+            // Mac
+            '/System/Library/Fonts/PingFang.ttc',
+            '/System/Library/Fonts/STHeiti Light.ttc',
+            '/Library/Fonts/Arial Unicode.ttf',
+        ];
+
+        foreach ($possiblePaths as $path) {
+            if (file_exists($path)) {
+                return $path;
+            }
+        }
+
+        return '';
     }
 
     /**
@@ -961,6 +1070,28 @@ class Captcha
      */
     public function verify(string|int|null $offset = null, ?string $token = null, array $clickPoints = []): array
     {
+        // 安全校验：检查请求指纹是否匹配（防止会话劫持）
+        $storedFingerprint = $this->getSessionValue($this->sessionKeyFingerprint);
+        if ($storedFingerprint !== null && $storedFingerprint !== $this->requestFingerprint) {
+            $this->refresh();
+            return [
+                'success' => false,
+                'token' => null,
+                'message' => '安全校验失败，请刷新重试',
+            ];
+        }
+
+        // 安全校验：检查验证码是否过期（超过10分钟视为过期）
+        $createdAt = $this->getSessionValue($this->sessionKeyCreatedAt, 0);
+        if ($createdAt > 0 && (time() - $createdAt) > 600) {
+            $this->refresh();
+            return [
+                'success' => false,
+                'token' => null,
+                'message' => '验证码已过期，请刷新重试',
+            ];
+        }
+
         // 获取当前验证码类型（优先从session，其次从配置）
         $sessionType = $this->getSessionValue($this->sessionKeyType);
         $configType = $this->config['captcha_type'] ?? self::TYPE_BOTH;
@@ -1348,6 +1479,8 @@ class Captcha
         $this->deleteSessionValue($this->sessionKeyCheck);
         $this->deleteSessionValue($this->sessionKeyType);
         $this->deleteSessionValue($this->sessionKeyClickData);
+        $this->deleteSessionValue($this->sessionKeyFingerprint);
+        $this->deleteSessionValue($this->sessionKeyCreatedAt);
         $this->clearToken();
     }
 
@@ -1398,6 +1531,8 @@ class Captcha
 
         $this->setSessionValue($this->sessionKeyR, $this->posX);
         $this->setSessionValue($this->sessionKeyErr, 0);
+        $this->setSessionValue($this->sessionKeyFingerprint, $this->requestFingerprint);
+        $this->setSessionValue($this->sessionKeyCreatedAt, time());
     }
 
     /**

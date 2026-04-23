@@ -1,16 +1,20 @@
-# xfCaptcha - 高性能滑动验证码 PHP 扩展包
+# xfCaptcha - 高性能滑动验证码 & 点击验证码 PHP 扩展包
 
 [![PHP Version](https://img.shields.io/badge/php-%3E%3D8.2-8892BF.svg)](https://php.net/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-高性能、安全、易用的滑动验证码 PHP 扩展包，支持 Laravel、ThinkPHP 等主流 PHP 框架，也可在原生 PHP 中使用。
+高性能、安全、易用的滑动验证码 & 点击验证码 PHP 扩展包，支持 Laravel、ThinkPHP 等主流 PHP 框架，也可在原生 PHP 中使用。
+
+- **滑动验证码**：拖动拼图滑块完成验证
+- **点击验证码**：按顺序点击图片中的文字/符号完成验证
+- **双模式随机**：支持两种验证码随机展示，增强安全性
 
 ![滑动验证码演示](demo.jpg)
 
 ## ✨ 特性
 
 - 🚀 **高性能**: 优化的图像处理算法，响应迅速
-- 🔒 **高安全性**: 支持双重验证模式，容错机制、错误次数限制、防暴力破解
+- 🔒 **高安全性**: 支持双重验证模式，容错机制、错误次数限制、防暴力破解、请求指纹绑定
 - 🎨 **美观界面**: 现代化 UI 设计，支持浅色/深色主题
 - 📱 **响应式**: 完美适配各种屏幕尺寸，移动端优化
 - 🔧 **易集成**: 支持 Laravel 11+、ThinkPHP 8+ 等主流框架
@@ -18,6 +22,8 @@
 - ⚡ **轻量化**: 无外部依赖，安装即用
 - 🛡️ **防重放**: Token 一次性使用，防止重放攻击
 - 🔄 **易重置**: 提供 reset() 接口，表单失败后快速重置
+- 🎯 **双模式**: 滑动验证码 + 点击验证码，支持随机切换
+- 📝 **中文支持**: 点击验证码支持中文汉字和符号，自动检测系统字体
 
 ## 📋 环境要求
 
@@ -148,7 +154,7 @@ Laravel 11 中引入 xfCaptcha 有三种方式：
         // 手动初始化
         xfCaptcha.init({
             handleDom: '#my-captcha',
-            getImgUrl: '{{ route('xf-captcha.image') }}',
+            dataUrl: '{{ route('xf-captcha.data') }}',
             checkUrl: '{{ route('xf-captcha.check') }}',
             placeholder: '点击完成验证',
             inputName: 'xf_captcha',
@@ -191,7 +197,7 @@ import 'zxf/captcha/resources/assets/css/captcha.css';
 document.addEventListener('DOMContentLoaded', function() {
     xfCaptcha.init({
         handleDom: '.xf-captcha',
-        getImgUrl: '/xf_captcha/image',
+        dataUrl: '/xf_captcha/data',
         checkUrl: '/xf_captcha/check',
         inputName: 'xf_captcha'
     });
@@ -226,6 +232,7 @@ document.addEventListener('DOMContentLoaded', function() {
 | `selector` | string | 自动生成 | 触发元素的选择器 |
 | `placeholder` | string | `点击按钮进行验证` | 触发按钮的占位文字 |
 | `slideText` | string | `拖动左边滑块完成上方拼图` | 滑动提示文字 |
+| `clickText` | string | `请按照顺序点击图片中的文字` | 点击提示文字 |
 | `successText` | string | `✓ 验证成功` | 验证成功提示 |
 | `failText` | string | `验证失败，请重试` | 验证失败提示 |
 | `inputName` | string | `xf_captcha_token` | 隐藏输入框的 `name` 属性 |
@@ -255,7 +262,7 @@ public function login(Request $request)
         'password' => 'required',
         'xf_captcha' => 'required|xfCaptcha', // 验证验证码
     ], [
-        'xf_captcha.required' => '请完成滑动验证',
+        'xf_captcha.required' => '请完成验证',
         'xf_captcha.xf_captcha' => '验证失败，请重新验证',
     ]);
     
@@ -304,7 +311,7 @@ php think vendor:publish zxf/captcha
     <script>
         xfCaptcha.init({
             handleDom: '.xf-captcha',
-            getImgUrl: '/xf_captcha/image',
+            dataUrl: '/xf_captcha/data',
             checkUrl: '/xf_captcha/check',
             inputName: 'xf_captcha_token'
         });
@@ -368,7 +375,27 @@ $captcha = new Captcha([
     'verify_mode' => Captcha::VERIFY_DUAL, // 双重验证模式
 ]);
 
-// 生成验证码图片
+// 获取验证码数据（支持滑动和点击验证码）
+if ($_GET['action'] === 'data') {
+    $isRefresh = isset($_GET['refresh']) || isset($_GET['_s']);
+    $result = $captcha->makeData([], $isRefresh);
+    header('Content-Type: application/json');
+    echo json_encode([
+        'success' => true,
+        'code' => 200,
+        'type' => $result['type'],
+        'image_base64' => $result['image_base64'],
+        'hint' => $result['hint'],
+        'bg_width' => $result['bg_width'],
+        'bg_height' => $result['bg_height'],
+        'mark_width' => $result['mark_width'] ?? null,
+        'mark_height' => $result['mark_height'] ?? null,
+        'char_count' => $result['char_count'] ?? null,
+    ]);
+    exit;
+}
+
+// 生成验证码图片（向后兼容）
 if ($_GET['action'] === 'image') {
     $captcha->make();
     exit;
@@ -376,7 +403,11 @@ if ($_GET['action'] === 'image') {
 
 // 验证
 if ($_GET['action'] === 'check') {
-    $result = $captcha->verify($_GET['captcha_r'] ?? null, $_GET['xf_captcha_token'] ?? null);
+    $clickPoints = $_GET['click_points'] ?? $_POST['click_points'] ?? [];
+    if (is_string($clickPoints)) {
+        $clickPoints = json_decode($clickPoints, true) ?: [];
+    }
+    $result = $captcha->verify($_GET['captcha_r'] ?? null, $_GET['xf_captcha_token'] ?? null, $clickPoints);
     header('Content-Type: application/json');
     echo json_encode($result);
     exit;
@@ -399,7 +430,7 @@ if ($_GET['action'] === 'check') {
     <script>
         xfCaptcha.init({
             handleDom: '.xf-captcha',
-            getImgUrl: '?action=image',
+            dataUrl: '?action=data',
             checkUrl: '?action=check',
             inputName: 'xf_captcha_token'
         });
@@ -436,6 +467,18 @@ if ($_GET['action'] === 'check') {
 return [
     /*
     |--------------------------------------------------------------------------
+    | 验证码类型
+    |--------------------------------------------------------------------------
+    |
+    | - 'slide' : 滑动验证码（传统拼图滑块）
+    | - 'click' : 点击验证码（按顺序点击图片中的文字/符号）
+    | - 'both'  : 两者同时使用并随机展示（推荐）
+    |
+    */
+    'captcha_type' => 'both',
+
+    /*
+    |--------------------------------------------------------------------------
     | 滑块图片路径
     |--------------------------------------------------------------------------
     |
@@ -462,7 +505,7 @@ return [
     |--------------------------------------------------------------------------
     |
     | 滑动位置允许的误差范围（像素）
- |
+    |
     */
     'fault_tolerance' => 3,
     
@@ -527,6 +570,47 @@ return [
     |--------------------------------------------------------------------------
     */
     'token_expire' => 300,
+
+    /*
+    |--------------------------------------------------------------------------
+    | 点击验证码配置
+    |--------------------------------------------------------------------------
+    |
+    */
+    'click' => [
+        // 点击验证的文字数量（推荐 3-5 个）
+        'char_count' => 4,
+
+        // 点击容错范围（像素，推荐 20-30）
+        'fault_tolerance' => 25,
+
+        // 字符库（留空则使用默认中文+符号混合库）
+        'chars' => [],
+
+        // 中文字体路径（自动检测常见系统字体，也可手动指定）
+        'font_path' => '',
+
+        // 文字大小（推荐 24-32，确保清晰可见）
+        'font_size' => 26,
+
+        // 文字颜色 [R, G, B]（留空则随机高对比度颜色）
+        'font_color' => [],
+
+        // 是否添加文字阴影/描边增强可读性
+        'text_stroke' => true,
+
+        // 是否添加文字背景半透明遮罩增强可读性
+        'text_bg_overlay' => true,
+
+        // 提示文字模板（%s 会被替换为需要点击的字符）
+        'hint_text' => '请依次点击：%s',
+
+        // 是否启用文字随机旋转（增强安全性）
+        'text_rotate' => true,
+
+        // 最大旋转角度（度数）
+        'max_rotate' => 30,
+    ],
     
     /*
     |--------------------------------------------------------------------------
@@ -539,6 +623,7 @@ return [
         'auto_insert_input' => true,
         'placeholder' => '点击按钮进行验证',
         'slide_text' => '拖动左边滑块完成上方拼图',
+        'click_text' => '请按照顺序点击图片中的文字',
         'success_text' => '✓ 验证成功',
         'fail_text' => '验证失败，请重试',
         'show_close' => true,
@@ -562,8 +647,16 @@ return [
 
 最安全的验证模式，流程如下：
 
+**滑动验证码流程**：
 1. **首次验证**：用户滑动滑块，前端发送位置到后端
 2. **生成 Token**：后端验证位置正确后，生成一次性 Token 返回
+3. **存储 Token**：前端将 Token 存入隐藏输入框
+4. **二次验证**：表单提交时，后端验证 Token 有效性
+5. **销毁 Token**：Token 一次性使用，验证后立即销毁
+
+**点击验证码流程**：
+1. **首次验证**：用户按顺序点击图片中的文字/符号，前端发送点击坐标到后端
+2. **生成 Token**：后端验证点击顺序和位置正确后，生成一次性 Token 返回
 3. **存储 Token**：前端将 Token 存入隐藏输入框
 4. **二次验证**：表单提交时，后端验证 Token 有效性
 5. **销毁 Token**：Token 一次性使用，验证后立即销毁
@@ -571,6 +664,8 @@ return [
 **安全特性**：
 - Token 一次性使用，防止重放攻击
 - Token 有过期时间（默认5分钟）
+- 验证码本身有过期时间（默认10分钟）
+- 请求指纹绑定（User-Agent + IP + 语言），防止 Session 劫持
 - 使用 hash_equals 防止时序攻击
 - 首次验证后 session 数据保留，二次验证后销毁
 
@@ -581,10 +676,12 @@ return [
 ```javascript
 xfCaptcha.init({
     handleDom: '.xf-captcha',       // 触发元素选择器
-    getImgUrl: '/xf_captcha/image', // 图片接口地址
+    dataUrl: '/xf_captcha/data',    // 数据接口地址（获取验证码类型和图片）
+    imageUrl: '/xf_captcha/image',  // 图片接口地址（向后兼容）
     checkUrl: '/xf_captcha/check',  // 验证接口地址
     placeholder: '点击按钮进行验证', // 按钮占位文字
     slideText: '拖动左边滑块完成上方拼图', // 滑动提示
+    clickText: '请按照顺序点击图片中的文字', // 点击提示
     successText: '✓ 验证成功',      // 成功提示
     failText: '验证失败，请重试',    // 失败提示
     showClose: true,                // 显示关闭按钮
@@ -647,7 +744,7 @@ document.getElementById('myForm').addEventListener('submit', function(e) {
     
     // 检查是否已完成验证
     if (!xfCaptcha.result()) {
-        alert('请先完成滑动验证');
+        alert('请先完成验证');
         return;
     }
     
@@ -686,6 +783,8 @@ document.getElementById('myForm').addEventListener('submit', function(e) {
 5. **调整容错值**：根据安全需求调整 `fault_tolerance`
 6. **及时重置**：表单提交失败后及时调用 `xfCaptcha.reset()`
 7. **Token 过期时间**：根据业务需求调整 `token_expire`
+8. **请求指纹绑定**：系统会自动绑定 User-Agent、IP 和语言指纹，防止 Session 劫持
+9. **验证码过期机制**：验证码生成后超过 10 分钟未验证将自动失效，需重新获取
 
 ## 🔧 常见问题
 
@@ -754,6 +853,18 @@ MIT License
 zhaoxianfang <zhaoxianfang@163.com>
 
 ## 📝 更新日志
+
+### v2.2.0
+- **新增点击验证码**：支持按顺序点击图片中的文字/符号完成验证
+- **双模式支持**：支持滑动验证码、点击验证码以及随机切换模式（`slide`/`click`/`both`）
+- **安全增强**：新增请求指纹绑定（User-Agent + IP + 语言），防止 Session 劫持
+- **安全增强**：新增验证码过期机制（默认 10 分钟），防止长期重放攻击
+- **配置增强**：点击验证码支持完整的自定义配置（字符库、字体、颜色、旋转、遮罩等）
+- **UI 优化**：点击验证码文字字号加大、标记改为半透明、移除进度提示、隐藏滑动组件
+- **交互优化**：点击验证码光标改为 pointer，点击容错范围扩大，元素样式过渡更平滑
+- **字符库**：默认使用中文汉字 + 符号混合库，自动检测系统字体路径
+- **框架兼容**：ThinkPHP 补齐 `/data` 数据接口，与 Laravel 功能保持一致
+- **文档完善**：补充点击验证码使用说明、安全特性描述和完整配置示例
 
 ### v2.1.0
 - **安全修复**：修复 Blade 组件回调解析问题，避免组件失效

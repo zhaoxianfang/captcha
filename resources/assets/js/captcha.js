@@ -355,24 +355,23 @@
             const x = Math.round((evt.clientX - rect.left) * scaleX);
             const y = Math.round((evt.clientY - rect.top) * scaleY);
 
-            // 检查是否在有效范围内
-            if (x < 0 || x > xfCaptcha._imgWidth || y < 0 || y > xfCaptcha._imgHeight) {
+            // 检查是否在有效范围内（留出边缘容错）
+            if (x < -10 || x > xfCaptcha._imgWidth + 10 || y < -10 || y > xfCaptcha._imgHeight + 10) {
                 return;
             }
 
-            // 记录点击位置
-            xfCaptcha._clickPoints.push({ x: x, y: y });
+            // 记录点击位置（限制在图片范围内）
+            const safeX = Math.max(0, Math.min(x, xfCaptcha._imgWidth));
+            const safeY = Math.max(0, Math.min(y, xfCaptcha._imgHeight));
+            xfCaptcha._clickPoints.push({ x: safeX, y: safeY });
             xfCaptcha._clickCount++;
 
             // 显示点击标记和动画
-            xfCaptcha._showClickMarker(x, y, xfCaptcha._clickCount);
+            xfCaptcha._showClickMarker(safeX, safeY, xfCaptcha._clickCount);
             xfCaptcha._showClickRipple(evt.clientX, evt.clientY);
 
-            // 更新提示文字显示进度
-            const expectedCount = xfCaptcha._options.charCount || 4;
-            xfCaptcha._updateClickHint(expectedCount - xfCaptcha._clickCount);
-
             // 检查是否点击完成
+            const expectedCount = xfCaptcha._options.charCount || 4;
             if (xfCaptcha._clickCount >= expectedCount) {
                 xfCaptcha._doing = true;
                 xfCaptcha._sendClickResult();
@@ -387,12 +386,12 @@
             if (!canvas) return;
 
             const ctx = canvas.getContext("2d");
-            const radius = 14;
-            const pulseRadius = 20;
+            const radius = 10;
+            const pulseRadius = 16;
 
-            // 绘制外圈发光效果
+            // 绘制外圈发光效果（更淡更细）
             const gradient = ctx.createRadialGradient(x, y, radius, x, y, pulseRadius);
-            gradient.addColorStop(0, "rgba(24, 144, 255, 0.4)");
+            gradient.addColorStop(0, "rgba(24, 144, 255, 0.25)");
             gradient.addColorStop(1, "rgba(24, 144, 255, 0)");
             
             ctx.beginPath();
@@ -400,35 +399,25 @@
             ctx.fillStyle = gradient;
             ctx.fill();
 
-            // 绘制主圆圈（带阴影）
+            // 绘制主圆圈（半透明，减少遮挡）
             ctx.save();
-            ctx.shadowColor = "rgba(24, 144, 255, 0.5)";
-            ctx.shadowBlur = 10;
-            ctx.shadowOffsetX = 0;
-            ctx.shadowOffsetY = 2;
-            
+            ctx.globalAlpha = 0.85;
             ctx.beginPath();
             ctx.arc(x, y, radius, 0, 2 * Math.PI);
             ctx.fillStyle = "#1890ff";
             ctx.fill();
             ctx.restore();
 
-            // 绘制内圈高光
-            ctx.beginPath();
-            ctx.arc(x, y - 2, radius - 3, 0, 2 * Math.PI);
-            ctx.fillStyle = "rgba(255, 255, 255, 0.3)";
-            ctx.fill();
-
-            // 绘制边框
+            // 绘制边框（更细）
             ctx.beginPath();
             ctx.arc(x, y, radius, 0, 2 * Math.PI);
-            ctx.strokeStyle = "#ffffff";
-            ctx.lineWidth = 2;
+            ctx.strokeStyle = "rgba(255, 255, 255, 0.9)";
+            ctx.lineWidth = 1.5;
             ctx.stroke();
 
-            // 绘制数字
+            // 绘制数字（缩小字号）
             ctx.fillStyle = "#ffffff";
-            ctx.font = "bold 16px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif";
+            ctx.font = "bold 13px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif";
             ctx.textAlign = "center";
             ctx.textBaseline = "middle";
             ctx.fillText(number.toString(), x, y);
@@ -444,22 +433,22 @@
             const canvas = document.querySelector(".captcha_canvas_mark");
             if (!canvas) return;
             
-            let scale = 1.5;
-            let opacity = 0.8;
+            let scale = 1.4;
+            let opacity = 0.6;
             const ctx = canvas.getContext("2d");
             
             function animate() {
                 if (scale <= 1 || opacity <= 0) return;
                 
-                scale -= 0.1;
-                opacity -= 0.1;
+                scale -= 0.08;
+                opacity -= 0.08;
                 
                 // 在标记周围绘制动画环
                 ctx.save();
                 ctx.beginPath();
-                ctx.arc(x, y, 14 * scale, 0, 2 * Math.PI);
+                ctx.arc(x, y, 10 * scale, 0, 2 * Math.PI);
                 ctx.strokeStyle = `rgba(24, 144, 255, ${opacity})`;
-                ctx.lineWidth = 2;
+                ctx.lineWidth = 1;
                 ctx.stroke();
                 ctx.restore();
                 
@@ -504,20 +493,17 @@
         },
 
         /**
-         * 更新点击验证码提示
+         * 更新点击验证码提示（已废弃进度提示，保留简洁提示）
          */
         _updateClickHint(remaining) {
+            // 需求：删除进度提示，避免干扰用户判断
+            // 此函数保留为空，不再显示任何进度信息
             const slideText = document.querySelector(".captcha_slide_text");
             if (!slideText) return;
             
-            slideText.style.display = "block";
-            
-            if (remaining > 0) {
-                slideText.innerHTML = `还需点击 <strong>${remaining}</strong> 个字符`;
-                slideText.style.color = "#1890ff";
-            } else {
-                slideText.innerHTML = "验证中...";
-                slideText.style.color = "#52c41a";
+            if (xfCaptcha._captchaType === 'click') {
+                // 点击模式下仅显示静态提示文字，不显示剩余数量
+                slideText.style.display = "block";
             }
         },
 
@@ -1299,31 +1285,46 @@
          * 更新 UI 以适配当前验证码类型
          */
         _updateUIForType(type) {
-            const slideBlock = document.querySelector(".captcha_slide");
+            const slideArea = document.querySelector(".captcha_slide");
+            const slideBlock = document.querySelector(".captcha_slide_block");
             const slideText = document.querySelector(".captcha_slide_text");
             const bgCanvas = document.querySelector(".captcha_canvas_bg");
             const modal = document.getElementById("captcha_div");
 
             if (type === 'click') {
-                // 点击验证码：完全隐藏滑动条
+                // 点击验证码：完全隐藏滑动组件，仅保留提示区域
                 if (slideBlock) slideBlock.style.display = "none";
+                if (slideArea) {
+                    slideArea.style.display = "block";
+                    slideArea.style.height = "auto";
+                    slideArea.style.minHeight = "0";
+                    slideArea.style.padding = "8px 0";
+                    slideArea.style.background = "transparent";
+                    slideArea.style.border = "none";
+                    slideArea.style.boxShadow = "none";
+                }
 
                 if (bgCanvas) {
                     bgCanvas.style.pointerEvents = "auto";
-                    bgCanvas.style.cursor = "crosshair";
+                    bgCanvas.style.cursor = "pointer";
                 }
                 
                 // 设置 modal 属性用于样式控制
                 if (modal) modal.setAttribute('data-type', 'click');
             } else {
                 // 滑动验证码：显示滑动条
-                if (slideBlock) {
-                    slideBlock.style.display = "block";
-                    slideBlock.style.opacity = "1";
-                    slideBlock.style.pointerEvents = "auto";
+                if (slideArea) {
+                    slideArea.style.display = "block";
+                    slideArea.style.opacity = "1";
+                    slideArea.style.pointerEvents = "auto";
+                    slideArea.style.height = "";
+                    slideArea.style.minHeight = "";
+                    slideArea.style.padding = "";
+                    slideArea.style.background = "";
+                    slideArea.style.border = "";
+                    slideArea.style.boxShadow = "";
                 }
-                const block = document.querySelector(".captcha_slide_block");
-                if (block) block.style.display = "block";
+                if (slideBlock) slideBlock.style.display = "block";
 
                 if (bgCanvas) {
                     bgCanvas.style.pointerEvents = "none";
