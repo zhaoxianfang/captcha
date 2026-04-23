@@ -43,10 +43,12 @@
     document.addEventListener('DOMContentLoaded', function() {
         var captcha = xfCaptcha.init({
             handleDom: '.{{ $elementId }}',
-            getImgUrl: '{{ route('xf-captcha.image') }}',
+            dataUrl: '{{ route('xf-captcha.data') }}',
+            imageUrl: '{{ route('xf-captcha.image') }}',
             checkUrl: '{{ route('xf-captcha.check') }}',
             placeholder: '{{ $placeholder ?? config('xf_captcha.frontend.placeholder', '点击按钮进行验证') }}',
             slideText: '{{ $slideText ?? config('xf_captcha.frontend.slide_text', '拖动左边滑块完成上方拼图') }}',
+            clickText: '{{ $clickText ?? config('xf_captcha.frontend.click_text', '请按照顺序点击图片中的文字') }}',
             successText: '{{ $successText ?? config('xf_captcha.frontend.success_text', '✓ 验证成功') }}',
             failText: '{{ $failText ?? config('xf_captcha.frontend.fail_text', '验证失败，请重试') }}',
             showClose: {{ $finalShowClose }},

@@ -28,8 +28,8 @@ if (!function_exists('isLaravel')) {
  * 验证码 HTTP 控制器
  *
  * 处理验证码相关的 HTTP 请求，包括：
- * - 获取验证码图片
- * - 验证滑动结果
+ * - 获取验证码图片/数据
+ * - 验证滑动/点击结果
  * - 提供静态资源（JS、CSS、图标）
  *
  * @author zhaoxianfang
@@ -63,9 +63,7 @@ class CaptchaController
      */
     protected function createCaptcha(): Captcha
     {
-        // 尝试从配置中获取配置信息
         $config = $this->getConfig();
-
         return new Captcha($config);
     }
 
@@ -81,11 +79,6 @@ class CaptchaController
             return config('xf_captcha', []);
         }
 
-        // ThinkPHP
-        if (function_exists('config') && class_exists('think\Container')) {
-            return config('xf_captcha', []);
-        }
-
         // 默认配置
         $configFile = dirname(__DIR__, 2) . '/config/xf_captcha.php';
         if (file_exists($configFile)) {
@@ -96,18 +89,68 @@ class CaptchaController
     }
 
     /**
-     * 获取验证码图片
+     * 获取验证码数据（支持滑动和点击验证码）
+     *
+     * @return mixed
+     */
+    public function data(): mixed
+    {
+        try {
+            // 检测是否为刷新操作（通过参数判断）
+            $isRefresh = isset($_GET['refresh']) || isset($_GET['_s']);
+            $result = $this->captcha->makeData([], $isRefresh);
+
+            $response = [
+                'success' => true,
+                'code' => 200,
+                'type' => $result['type'],
+                'image_base64' => $result['image_base64'],
+                'hint' => $result['hint'],
+                'bg_width' => $result['bg_width'],
+                'bg_height' => $result['bg_height'],
+            ];
+
+            // 滑动验证码特有字段
+            if ($result['type'] === Captcha::TYPE_SLIDE) {
+                $response['mark_width'] = $result['mark_width'];
+                $response['mark_height'] = $result['mark_height'];
+            } else {
+                $response['char_count'] = $result['char_count'];
+            }
+
+            if (isLaravel()) {
+                return response()->json($response);
+            }
+
+            $this->jsonResponse($response);
+            return null;
+        } catch (\Throwable $e) {
+            $response = [
+                'success' => false,
+                'message' => '生成验证码失败：' . $e->getMessage(),
+                'code' => 500,
+            ];
+
+            if (isLaravel()) {
+                return response()->json($response, 500);
+            }
+
+            $this->jsonResponse($response, 500);
+            return null;
+        }
+    }
+
+    /**
+     * 获取验证码图片（向后兼容）
      *
      * @return mixed
      */
     public function image(): mixed
     {
         try {
-            // 确定图片格式
             $format = $this->getOutputFormat();
             $contentType = 'image/' . $format;
 
-            // 在 Laravel 中使用 makeRaw 获取二进制数据
             if (isLaravel()) {
                 $imageData = $this->captcha->makeRaw();
                 return response($imageData, 200, [
@@ -118,11 +161,9 @@ class CaptchaController
                 ]);
             }
 
-            // 原生 PHP 环境直接输出
             $this->captcha->make();
             return null;
         } catch (\Throwable $e) {
-            // 输出错误图片
             return $this->outputErrorImage($e->getMessage());
         }
     }
@@ -134,38 +175,48 @@ class CaptchaController
      */
     protected function getOutputFormat(): string
     {
-        // 如果强制指定了格式或 WebP 不支持
         if (isset($_GET['nowebp']) || !function_exists('imagewebp')) {
             return 'png';
         }
 
-        // 从配置中获取格式
         $config = $this->getConfig();
         return ($config['output_format'] ?? 'webp') === 'webp' ? 'webp' : 'png';
     }
 
     /**
-     * 验证滑动结果
+     * 验证验证码结果
      *
      * @return mixed
      */
     public function check(): mixed
     {
         try {
-            $result = $this->captcha->check();
+            $offset = request('captcha_r') ?? $_REQUEST['captcha_r'] ?? null;
+            $token = request('xf_captcha_token') ?? $_REQUEST['xf_captcha_token'] ?? null;
+            $clickPoints = request('click_points') ?? $_REQUEST['click_points'] ?? [];
 
-            $response = [
-                'success' => $result,
-                'message' => $result ? '验证成功' : '验证失败，请重试',
-                'code' => $result ? 200 : 400,
-            ];
-
-            // Laravel 环境返回 Response 对象
-            if (isLaravel()) {
-                return response()->json($response, $result ? 200 : 400);
+            // 解析点击坐标
+            if (is_string($clickPoints)) {
+                $clickPoints = json_decode($clickPoints, true) ?: [];
             }
 
-            $this->jsonResponse($response, $result ? 200 : 400);
+            $result = $this->captcha->verify($offset, $token, $clickPoints);
+
+            $response = [
+                'success' => $result['success'],
+                'message' => $result['message'],
+                'code' => $result['success'] ? 200 : 400,
+            ];
+
+            if (!empty($result['token'])) {
+                $response['token'] = $result['token'];
+            }
+
+            if (isLaravel()) {
+                return response()->json($response, $result['success'] ? 200 : 400);
+            }
+
+            $this->jsonResponse($response, $result['success'] ? 200 : 400);
             return null;
         } catch (\Throwable $e) {
             $response = [
@@ -193,12 +244,10 @@ class CaptchaController
      */
     protected function jsonResponse(array $data, int $status = 200): void
     {
-        // 清理输出缓冲区
         while (ob_get_level() > 0) {
             ob_end_clean();
         }
 
-        // 设置响应头
         if (!headers_sent()) {
             http_response_code($status);
             header('Content-Type: application/json; charset=utf-8');
@@ -259,7 +308,6 @@ class CaptchaController
             return $this->sendError('Failed to read file', 500);
         }
 
-        // Laravel 环境：返回 Response 对象
         if (isLaravel()) {
             return response($content, 200, [
                 'Content-Type' => $mimeType,
@@ -269,13 +317,10 @@ class CaptchaController
             ]);
         }
 
-        // 原生 PHP 环境：直接输出
-        // 清理输出缓冲区
         while (ob_get_level() > 0) {
             ob_end_clean();
         }
 
-        // 设置响应头
         if (!headers_sent()) {
             header('Content-Type: ' . $mimeType);
             header('Content-Length: ' . strlen($content));
@@ -317,7 +362,6 @@ class CaptchaController
      */
     protected function outputErrorImage(string $message): mixed
     {
-        // 创建简单的错误提示图片
         $width = 240;
         $height = 150;
         $image = imagecreatetruecolor($width, $height);
@@ -326,14 +370,11 @@ class CaptchaController
             return $this->sendError('Failed to create image', 500);
         }
 
-        // 背景色（浅红色）
         $bgColor = imagecolorallocate($image, 255, 235, 238);
         imagefill($image, 0, 0, $bgColor);
 
-        // 文字颜色（深红色）
         $textColor = imagecolorallocate($image, 198, 40, 40);
 
-        // 绘制错误信息
         $lines = str_split($message, 30);
         $y = 60;
         foreach ($lines as $line) {
@@ -341,7 +382,6 @@ class CaptchaController
             $y += 16;
         }
 
-        // 在 Laravel 环境中返回 Response
         if (isLaravel()) {
             ob_start();
             imagepng($image);
@@ -354,7 +394,6 @@ class CaptchaController
             ]);
         }
 
-        // 原生 PHP 环境直接输出
         while (ob_get_level() > 0) {
             ob_end_clean();
         }
