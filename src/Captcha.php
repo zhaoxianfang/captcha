@@ -797,8 +797,13 @@ class Captcha
             '星', '云', '红', '黄', '蓝', '绿', '白', '黑', '金', '木',
             '东', '西', '南', '北', '高', '低', '长', '短', '圆', '方',
             // 小图标符号（醒目易识别）
-            '★', '♥', '♦', '♣', '♠', '◎', '●', '■', '▲', '▼',
-            '◇', '○', '□', '△', '▽', '✦', '✧', '✪', '✯', '✰',
+            '⌨️', '♻️', '🗺️', '✂️', '🏕️', '🏖️', '🏜️', '🏝️', '🏞️',
+            '🏟️', '🏛️', '🏗️', '🏔️', '⛰️', '🗃️', '🗄', '🖇️', '⛏️',
+            '⚒️', '🛠️', '🗡️', '⚔️', '🗑️', '🖥️', '🖨️', '🖲️', '🔥',
+            '👊', '👊', '👁️', '✍️', '✌️', '❤️', '🌶️', '☘️', '☀️',
+            '☁️', '🌥️', '🌦️', '🌧️', '🌨️', '🌩️', '⛈️', '🌪️', '🌬️',
+            '⛷️', '🏋️', '⛹️', '🏌️', '🏎️', '🏍️', '✈️', '🛩️', '🛥️',
+            '🛳️', '⏱️', '☎️', '🕰️'
         ];
         shuffle($mixedChars);
         return $mixedChars;
@@ -943,20 +948,7 @@ class Captcha
     private function findSystemFont(): string
     {
         $possiblePaths = [
-            // Windows
-            'C:/Windows/Fonts/simhei.ttf',
-            'C:/Windows/Fonts/simsun.ttc',
-            'C:/Windows/Fonts/msyh.ttc',
-            'C:/Windows/Fonts/msyhbd.ttc',
-            // Linux
-            '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc',
-            '/usr/share/fonts/truetype/wqy/wqy-microhei.ttc',
-            '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
-            '/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf',
-            // Mac
-            '/System/Library/Fonts/PingFang.ttc',
-            '/System/Library/Fonts/STHeiti Light.ttc',
-            '/Library/Fonts/Arial Unicode.ttf',
+            dirname(__FILE__, 2) . '/resources/assets/font/CorpSrcWinSong.ttf', // 司源赢宋
         ];
 
         foreach ($possiblePaths as $path) {
