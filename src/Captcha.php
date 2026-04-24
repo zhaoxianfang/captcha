@@ -856,20 +856,20 @@ class Captcha
 
             if ($hasTtf) {
                 // 计算文字尺寸以绘制背景遮罩
-                $bbox = imagettfbbox($fontSize, $rotateAngle, $fontPath, $char);
-                if ($bbox !== false && $textBgOverlay) {
-                    $minX = min($bbox[0], $bbox[2], $bbox[4], $bbox[6]);
-                    $maxX = max($bbox[0], $bbox[2], $bbox[4], $bbox[6]);
-                    $minY = min($bbox[1], $bbox[3], $bbox[5], $bbox[7]);
-                    $maxY = max($bbox[1], $bbox[3], $bbox[5], $bbox[7]);
-                    $textW = $maxX - $minX;
-                    $textH = $maxY - $minY;
-
-                    // 绘制半透明圆形背景遮罩增强可读性
-                    $overlayRadius = max($textW, $textH) * 0.65;
-                    $overlayColor = imagecolorallocatealpha($this->imBg, 255, 255, 255, 100);
-                    imagefilledellipse($this->imBg, $x, $y - (int)($fontSize * 0.15), (int)($overlayRadius * 2.2), (int)($overlayRadius * 2.2), $overlayColor);
-                }
+                //    $bbox = imagettfbbox($fontSize, $rotateAngle, $fontPath, $char);
+                //    if ($bbox !== false && $textBgOverlay) {
+                //        $minX = min($bbox[0], $bbox[2], $bbox[4], $bbox[6]);
+                //        $maxX = max($bbox[0], $bbox[2], $bbox[4], $bbox[6]);
+                //        $minY = min($bbox[1], $bbox[3], $bbox[5], $bbox[7]);
+                //        $maxY = max($bbox[1], $bbox[3], $bbox[5], $bbox[7]);
+                //        $textW = $maxX - $minX;
+                //        $textH = $maxY - $minY;
+                //
+                //        // 绘制半透明圆形背景遮罩增强可读性
+                //        $overlayRadius = max($textW, $textH) * 0.65;
+                //        $overlayColor = imagecolorallocatealpha($this->imBg, 255, 255, 255, 100);
+                //        imagefilledellipse($this->imBg, $x, $y - (int)($fontSize * 0.15), (int)($overlayRadius * 2.2), (int)($overlayRadius * 2.2), $overlayColor);
+                //    }
 
                 // 添加白色描边/阴影效果增强可读性
                 if ($textStroke) {
