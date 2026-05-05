@@ -217,6 +217,21 @@ class Captcha
     private string $sessionKeyCreatedAt = 'captcha_created_at';
 
     /**
+     * Session 键名 - 存储速率限制计数
+     */
+    private string $sessionKeyRateLimit = 'captcha_rate_limit';
+
+    /**
+     * Session 键名 - 存储速率限制时间窗口
+     */
+    private string $sessionKeyRateLimitTime = 'captcha_rate_limit_time';
+
+    /**
+     * Session 键名 - 存储滑动轨迹数据
+     */
+    private string $sessionKeySlideTrack = 'captcha_slide_track';
+
+    /**
      * 是否使用模拟Session（CLI模式）
      */
     private bool $useMockSession = false;
@@ -407,6 +422,9 @@ class Captcha
         $this->sessionKeyClickData = $prefix . '_click_data';
         $this->sessionKeyFingerprint = $prefix . '_fingerprint';
         $this->sessionKeyCreatedAt = $prefix . '_created_at';
+        $this->sessionKeyRateLimit = $prefix . '_rate_limit';
+        $this->sessionKeyRateLimitTime = $prefix . '_rate_limit_time';
+        $this->sessionKeySlideTrack = $prefix . '_slide_track';
 
         // 生成请求指纹用于安全校验
         $this->requestFingerprint = $this->generateFingerprint();
@@ -813,13 +831,13 @@ class Captcha
         $clickConfig = $this->config['click'] ?? [];
         $charCount = $this->filterInt($clickConfig['char_count'] ?? 4, 1, 8);
 
-        // 获取字符库
-        $chars = $this->getClickChars();
+        // 获取字符库（只取需要的数量）
+        $chars = $this->getClickChars($charCount);
 
         $this->clickData = [];
         $padding = max(35, (int) ($this->bgWidth * 0.12)); // 动态边缘留白
         $minDistance = max(40, (int) ($this->bgWidth * 0.15)); // 动态最小距离
-        $maxAttempts = 200; // 增加最大尝试次数
+        $maxAttempts = 200; // 最大尝试次数
 
         // 自适应网格大小
         $gridCols = min($charCount, max(2, (int) ceil(sqrt($charCount * 1.5))));
@@ -827,6 +845,8 @@ class Captcha
         $cellWidth = ($this->bgWidth - $padding * 2) / $gridCols;
         $cellHeight = ($this->bgHeight - $padding * 2) / $gridRows;
 
+        $totalCells = $gridCols * $gridRows;
+        $availableCells = range(0, $totalCells - 1);
         $usedCells = [];
 
         for ($i = 0; $i < $charCount; $i++) {
@@ -835,16 +855,17 @@ class Captcha
 
             while (!$placed && $attempts < $maxAttempts) {
                 // 优先在未使用的网格中放置
-                if ($i < $gridCols * $gridRows) {
-                    $availableCells = array_diff(range(0, $gridCols * $gridRows - 1), $usedCells);
-                    if (!empty($availableCells)) {
-                        $cellIndex = array_values($availableCells)[0];
+                if ($i < $totalCells) {
+                    $remainingCells = array_diff($availableCells, $usedCells);
+                    if (!empty($remainingCells)) {
+                        $remainingValues = array_values($remainingCells);
+                        $cellIndex = $remainingValues[$this->secureRandomIndex($remainingValues)];
                         $usedCells[] = $cellIndex;
                     } else {
-                        $cellIndex = $this->secureRandomIndex(range(0, $gridCols * $gridRows - 1));
+                        $cellIndex = $this->secureRandomInt(0, $totalCells - 1);
                     }
                 } else {
-                    $cellIndex = $this->secureRandomIndex(range(0, $gridCols * $gridRows - 1));
+                    $cellIndex = $this->secureRandomInt(0, $totalCells - 1);
                 }
 
                 $gridX = $cellIndex % $gridCols;
@@ -926,18 +947,32 @@ class Captcha
      *
      * @return array 字符数组
      */
-    private function getClickChars(): array
+    /**
+     * 获取点击验证码的字符库
+     *
+     * @param int $count 需要返回的字符数量，0 表示返回全部
+     *
+     * @return array 字符数组
+     */
+    private function getClickChars(int $count = 0): array
     {
         $clickConfig = $this->config['click'] ?? [];
         $customChars = $clickConfig['chars'] ?? [];
 
         if (!empty($customChars) && is_array($customChars)) {
-            return array_values(array_unique(array_filter($customChars, 'is_string')));
+            $chars = array_values(array_unique(array_filter($customChars, 'is_string')));
+            if ($count > 0) {
+                // 如果自定义字符不够，循环使用直到满足数量
+                while (count($chars) < $count) {
+                    $chars = array_merge($chars, $chars);
+                }
+                return array_slice($chars, 0, $count);
+            }
+            return $chars;
         }
 
-        // 默认使用中文汉字库，去重并按使用频率分组
+        // 默认使用中文汉字库，去重
         $mixedChars = [
-            // 高频常用汉字（优先使用）
             '的', '是', '了', '我', '不', '人', '在', '他', '有', '这',
             '个', '上', '们', '来', '到', '说', '去', '你', '会', '也',
             '对', '生', '可', '以', '那', '大', '子', '得', '就', '下',
@@ -967,14 +1002,19 @@ class Captcha
             '颜', '色', '红', '黄', '蓝', '白', '紫', '黑', '青', '金',
         ];
 
-        // 使用 secureRandomIndex 进行 Fisher-Yates 洗牌
-        $count = count($mixedChars);
-        for ($i = $count - 1; $i > 0; $i--) {
+        // 确保去重
+        $mixedChars = array_values(array_unique($mixedChars));
+
+        $total = count($mixedChars);
+        $need = $count > 0 ? min($count, $total) : $total;
+
+        // Fisher-Yates 部分洗牌：只洗牌需要的数量，减少计算开销
+        for ($i = $total - 1, $n = $need; $i > 0 && $n > 0; $i--, $n--) {
             $j = $this->secureRandomInt(0, $i);
             [$mixedChars[$i], $mixedChars[$j]] = [$mixedChars[$j], $mixedChars[$i]];
         }
 
-        return $mixedChars;
+        return array_slice($mixedChars, -$need);
     }
 
     /**
@@ -1096,21 +1136,84 @@ class Captcha
             }
         }
 
+        // 绘制干扰线（如果启用）
+        $this->drawInterferenceLines();
+
         // 输出图片
         return $this->outputImageToBuffer($this->imBg);
     }
 
     /**
+     * 绘制点击验证码干扰线
+     */
+    private function drawInterferenceLines(): void
+    {
+        $clickConfig = $this->config['click'] ?? [];
+        $enabled = (bool) ($clickConfig['interference_lines'] ?? true);
+        if (!$enabled) {
+            return;
+        }
+
+        $lineCount = $this->filterInt($clickConfig['interference_line_count'] ?? 3, 0, 10);
+        if ($lineCount <= 0 || $this->imBg === null) {
+            return;
+        }
+
+        for ($i = 0; $i < $lineCount; $i++) {
+            $x1 = $this->secureRandomInt(0, $this->bgWidth);
+            $y1 = $this->secureRandomInt(0, $this->bgHeight);
+            $x2 = $this->secureRandomInt(0, $this->bgWidth);
+            $y2 = $this->secureRandomInt(0, $this->bgHeight);
+
+            $r = $this->secureRandomInt(50, 200);
+            $g = $this->secureRandomInt(50, 200);
+            $b = $this->secureRandomInt(50, 200);
+            $color = imagecolorallocate($this->imBg, $r, $g, $b);
+
+            if ($color !== false) {
+                imageline($this->imBg, $x1, $y1, $x2, $y2, $color);
+            }
+        }
+    }
+
+    /**
      * 查找系统默认字体
+     *
+     * 按操作系统自动检测常见中文字体路径
      */
     private function findSystemFont(): string
     {
         $possiblePaths = [
-            dirname(__FILE__, 2) . '/resources/assets/font/custom.ttf', // 使用猫啃网-字体传奇特战体-剪辑出高频常用的前250个汉字
+            // 包内字体（优先）
+            dirname(__FILE__, 2) . '/resources/assets/font/custom.ttf',
         ];
 
+        // 根据操作系统添加常见字体路径
+        if (PHP_OS_FAMILY === 'Windows') {
+            $possiblePaths[] = 'C:\\Windows\\Fonts\\simhei.ttf';
+            $possiblePaths[] = 'C:\\Windows\\Fonts\\simsun.ttc';
+            $possiblePaths[] = 'C:\\Windows\\Fonts\\msyh.ttc';
+            $possiblePaths[] = 'C:\\Windows\\Fonts\\msyhbd.ttc';
+            $possiblePaths[] = 'C:\\Windows\\Fonts\\simkai.ttf';
+        } elseif (PHP_OS_FAMILY === 'Darwin') {
+            $possiblePaths[] = '/System/Library/Fonts/PingFang.ttc';
+            $possiblePaths[] = '/System/Library/Fonts/STHeiti Light.ttc';
+            $possiblePaths[] = '/System/Library/Fonts/Hiragino Sans GB.ttc';
+            $possiblePaths[] = '/Library/Fonts/Arial Unicode.ttf';
+            $possiblePaths[] = '/System/Library/Fonts/Supplemental/Arial Unicode.ttf';
+        } else {
+            // Linux 及类 Unix 系统
+            $possiblePaths[] = '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc';
+            $possiblePaths[] = '/usr/share/fonts/truetype/wqy/wqy-microhei.ttc';
+            $possiblePaths[] = '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc';
+            $possiblePaths[] = '/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc';
+            $possiblePaths[] = '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf';
+            $possiblePaths[] = '/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf';
+            $possiblePaths[] = '/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf';
+        }
+
         foreach ($possiblePaths as $path) {
-            if (file_exists($path)) {
+            if (file_exists($path) && is_readable($path)) {
                 return $path;
             }
         }
@@ -1234,8 +1337,27 @@ class Captcha
      *
      * @return array 验证结果 ['success' => bool, 'token' => string|null, 'message' => string]
      */
-    public function verify(string|int|null $offset = null, ?string $token = null, array $clickPoints = []): array
+    /**
+     * 验证用户操作结果
+     *
+     * @param string|int|null $offset      用户滑动的偏移量（滑动验证码）
+     * @param string|null     $token       验证令牌（双重验证模式使用）
+     * @param array           $clickPoints 用户点击的坐标点（点击验证码）
+     * @param array           $slideTrack  滑动轨迹数据 [['x'=>int,'y'=>int,'t'=>int],...]
+     *
+     * @return array 验证结果 ['success' => bool, 'token' => string|null, 'message' => string]
+     */
+    public function verify(string|int|null $offset = null, ?string $token = null, array $clickPoints = [], array $slideTrack = []): array
     {
+        // 速率限制检查
+        if (!$this->checkRateLimit()) {
+            return [
+                'success' => false,
+                'token' => null,
+                'message' => '请求过于频繁，请稍后再试',
+            ];
+        }
+
         // 安全校验：检查请求指纹是否匹配（防止会话劫持）
         $storedFingerprint = $this->getSessionValue($this->sessionKeyFingerprint);
         if ($storedFingerprint !== null && $storedFingerprint !== $this->requestFingerprint) {
@@ -1262,8 +1384,7 @@ class Captcha
         // 获取当前验证码类型（优先从session，其次从配置）
         $sessionType = $this->getSessionValue($this->sessionKeyType);
         $configType = $this->config['captcha_type'] ?? self::TYPE_BOTH;
-        
-        // 如果session中有类型，使用session中的；否则使用配置的类型
+
         if ($sessionType !== null) {
             $captchaType = $sessionType;
         } elseif ($configType !== self::TYPE_BOTH) {
@@ -1282,9 +1403,9 @@ class Captcha
 
         return match ($verifyMode) {
             self::VERIFY_FRONTEND_ONLY => $this->verifyFrontendOnly(),
-            self::VERIFY_BACKEND_ONLY => $this->verifyBackendOnly($offset),
-            self::VERIFY_DUAL => $this->verifyDual($offset, $token),
-            default => $this->verifyDual($offset, $token),
+            self::VERIFY_BACKEND_ONLY => $this->verifyBackendOnly($offset, $slideTrack),
+            self::VERIFY_DUAL => $this->verifyDual($offset, $token, $slideTrack),
+            default => $this->verifyDual($offset, $token, $slideTrack),
         };
     }
 
@@ -1390,7 +1511,7 @@ class Captcha
     /**
      * 仅后端验证模式
      */
-    private function verifyBackendOnly(string|int|null $offset): array
+    private function verifyBackendOnly(string|int|null $offset, array $slideTrack = []): array
     {
         if (!$this->hasSessionValue($this->sessionKeyR)) {
             return [
@@ -1419,14 +1540,7 @@ class Captcha
         $diff = abs($correctPos - $offset);
         $isValid = $diff <= $this->faultTolerance;
 
-        if ($isValid) {
-            $this->handleSuccessfulCheck();
-            return [
-                'success' => true,
-                'token' => null,
-                'message' => '验证成功',
-            ];
-        } else {
+        if (!$isValid) {
             $this->handleFailedCheck();
             return [
                 'success' => false,
@@ -1434,12 +1548,28 @@ class Captcha
                 'message' => '验证失败，请重试',
             ];
         }
+
+        // 轨迹验证（如果启用且提供了轨迹数据）
+        if (!empty($slideTrack)) {
+            $trackResult = $this->verifySlideTrack($slideTrack);
+            if (!$trackResult['success']) {
+                $this->handleFailedCheck();
+                return $trackResult;
+            }
+        }
+
+        $this->handleSuccessfulCheck();
+        return [
+            'success' => true,
+            'token' => null,
+            'message' => '验证成功',
+        ];
     }
 
     /**
      * 双重验证模式
      */
-    private function verifyDual(string|int|null $offset, ?string $token): array
+    private function verifyDual(string|int|null $offset, ?string $token, array $slideTrack = []): array
     {
         // 如果有token，进行二次验证
         if ($token !== null && $token !== '') {
@@ -1447,13 +1577,13 @@ class Captcha
         }
 
         // 首次验证
-        return $this->verifyPrimary($offset);
+        return $this->verifyPrimary($offset, $slideTrack);
     }
 
     /**
      * 首次验证（前端滑动验证）
      */
-    private function verifyPrimary(string|int|null $offset): array
+    private function verifyPrimary(string|int|null $offset, array $slideTrack = []): array
     {
         if (!$this->hasSessionValue($this->sessionKeyR)) {
             return [
@@ -1482,32 +1612,7 @@ class Captcha
         $diff = abs($correctPos - $offset);
         $isValid = $diff <= $this->faultTolerance;
 
-        if ($isValid) {
-            // 根据验证模式处理
-            $verifyMode = $this->config['verify_mode'] ?? self::VERIFY_DUAL;
-            
-            if ($verifyMode === self::VERIFY_BACKEND_ONLY) {
-                // 仅后端验证模式：验证成功后立即销毁数据
-                $this->handleSuccessfulCheck();
-                return [
-                    'success' => true,
-                    'token' => null,
-                    'message' => '验证成功',
-                ];
-            }
-            
-            // 双重验证模式：生成一次性令牌
-            $token = $this->generateToken();
-            $this->setSessionValue($this->sessionKeyToken, $token);
-            $this->setSessionValue($this->sessionKeyTokenExpire, time() + $this->tokenExpire);
-            $this->setSessionValue($this->sessionKeyCheck, 'pending');
-
-            return [
-                'success' => true,
-                'token' => $token,
-                'message' => '验证成功，请完成后续操作',
-            ];
-        } else {
+        if (!$isValid) {
             $this->handleFailedCheck();
             return [
                 'success' => false,
@@ -1515,6 +1620,39 @@ class Captcha
                 'message' => '验证失败，请重试',
             ];
         }
+
+        // 轨迹验证（如果启用且提供了轨迹数据）
+        if (!empty($slideTrack)) {
+            $trackResult = $this->verifySlideTrack($slideTrack);
+            if (!$trackResult['success']) {
+                $this->handleFailedCheck();
+                return $trackResult;
+            }
+        }
+
+        // 根据验证模式处理
+        $verifyMode = $this->config['verify_mode'] ?? self::VERIFY_DUAL;
+
+        if ($verifyMode === self::VERIFY_BACKEND_ONLY) {
+            $this->handleSuccessfulCheck();
+            return [
+                'success' => true,
+                'token' => null,
+                'message' => '验证成功',
+            ];
+        }
+
+        // 双重验证模式：生成一次性令牌
+        $token = $this->generateToken();
+        $this->setSessionValue($this->sessionKeyToken, $token);
+        $this->setSessionValue($this->sessionKeyTokenExpire, time() + $this->tokenExpire);
+        $this->setSessionValue($this->sessionKeyCheck, 'pending');
+
+        return [
+            'success' => true,
+            'token' => $token,
+            'message' => '验证成功，请完成后续操作',
+        ];
     }
 
     /**
@@ -1616,6 +1754,194 @@ class Captcha
     }
 
     /**
+     * 检查速率限制
+     *
+     * 基于滑动时间窗口的速率限制，防止暴力破解和滥用
+     *
+     * @return bool 是否允许继续请求
+     */
+    private function checkRateLimit(): bool
+    {
+        $rateConfig = $this->config['rate_limit'] ?? [];
+        $enabled = (bool) ($rateConfig['enabled'] ?? true);
+        if (!$enabled) {
+            return true;
+        }
+
+        $window = $this->filterInt($rateConfig['window'] ?? 60, 10, 3600);
+        $maxRequests = $this->filterInt($rateConfig['max_requests'] ?? 30, 1, 1000);
+
+        $lastTime = $this->getSessionValue($this->sessionKeyRateLimitTime, 0);
+        $count = $this->getSessionValue($this->sessionKeyRateLimit, 0);
+
+        if (time() - $lastTime > $window) {
+            $this->setSessionValue($this->sessionKeyRateLimitTime, time());
+            $this->setSessionValue($this->sessionKeyRateLimit, 1);
+            return true;
+        }
+
+        if ($count >= $maxRequests) {
+            return false;
+        }
+
+        $this->setSessionValue($this->sessionKeyRateLimit, $count + 1);
+        return true;
+    }
+
+    /**
+     * 验证滑动轨迹
+     *
+     * 通过分析滑动轨迹特征检测机器人行为
+     *
+     * @param array $track 轨迹数据 [['x'=>int,'y'=>int,'t'=>int],...]
+     *
+     * @return array 验证结果 ['success' => bool, 'message' => string]
+     */
+    private function verifySlideTrack(array $track): array
+    {
+        $slideConfig = $this->config['slide'] ?? [];
+        $trackVerify = (bool) ($slideConfig['track_verify'] ?? true);
+        if (!$trackVerify) {
+            return ['success' => true, 'message' => '轨迹验证已关闭'];
+        }
+
+        $strictness = $slideConfig['track_strictness'] ?? 'normal';
+
+        // 基本校验：轨迹不能为空且至少要有几个点
+        if (count($track) < 3) {
+            return ['success' => false, 'message' => '轨迹数据异常，请重试'];
+        }
+
+        // 提取有效数据
+        $points = [];
+        foreach ($track as $point) {
+            if (isset($point['x'], $point['y'], $point['t'])) {
+                $points[] = [
+                    'x' => (int) $point['x'],
+                    'y' => (int) $point['y'],
+                    't' => (int) $point['t'],
+                ];
+            }
+        }
+
+        if (count($points) < 3) {
+            return ['success' => false, 'message' => '轨迹数据格式错误'];
+        }
+
+        // 计算轨迹特征
+        $totalTime = $points[count($points) - 1]['t'] - $points[0]['t'];
+        $totalDistance = 0;
+        $directionChanges = 0;
+        $speeds = [];
+        $prevDx = 0;
+
+        for ($i = 1; $i < count($points); $i++) {
+            $dx = $points[$i]['x'] - $points[$i - 1]['x'];
+            $dy = $points[$i]['y'] - $points[$i - 1]['y'];
+            $dt = max(1, $points[$i]['t'] - $points[$i - 1]['t']);
+
+            $dist = hypot($dx, $dy);
+            $totalDistance += $dist;
+            $speeds[] = $dist / $dt;
+
+            // 检测方向变化（人类滑动会有自然的方向微调）
+            if ($i > 1) {
+                if (($dx > 0 && $prevDx < 0) || ($dx < 0 && $prevDx > 0)) {
+                    $directionChanges++;
+                }
+            }
+            $prevDx = $dx;
+        }
+
+        // 根据严格程度设置阈值
+        $thresholds = match ($strictness) {
+            'strict' => [
+                'min_time' => 500,      // 最少耗时 500ms
+                'max_speed' => 5,       // 最大速度 5px/ms
+                'min_points' => 10,     // 最少轨迹点数
+                'max_straight' => 0.95, // 直线度最大 95%
+            ],
+            'loose' => [
+                'min_time' => 200,
+                'max_speed' => 15,
+                'min_points' => 3,
+                'max_straight' => 0.99,
+            ],
+            default => [ // normal
+                'min_time' => 300,
+                'max_speed' => 10,
+                'min_points' => 5,
+                'max_straight' => 0.97,
+            ],
+        };
+
+        // 检查最小耗时（防止瞬间完成）
+        if ($totalTime < $thresholds['min_time']) {
+            return ['success' => false, 'message' => '操作过快，请重试'];
+        }
+
+        // 检查轨迹点数
+        if (count($points) < $thresholds['min_points']) {
+            return ['success' => false, 'message' => '轨迹不完整，请重试'];
+        }
+
+        // 检查最大速度（防止瞬间跳跃）
+        if (!empty($speeds)) {
+            $maxSpeed = max($speeds);
+            if ($maxSpeed > $thresholds['max_speed']) {
+                return ['success' => false, 'message' => '滑动速度异常，请重试'];
+            }
+        }
+
+        // 检查直线度（人类滑动不会完全直线）
+        if ($totalDistance > 0) {
+            $startEndDist = hypot(
+                $points[count($points) - 1]['x'] - $points[0]['x'],
+                $points[count($points) - 1]['y'] - $points[0]['y']
+            );
+            $straightness = $startEndDist / $totalDistance;
+            if ($straightness > $thresholds['max_straight']) {
+                return ['success' => false, 'message' => '轨迹异常，请重试'];
+            }
+        }
+
+        // 检查速度变化（人类有加减速过程）
+        if (count($speeds) >= 3) {
+            $speedVariance = $this->calculateVariance($speeds);
+            // 如果速度几乎不变，可能是机器人匀速滑动
+            if ($speedVariance < 0.01) {
+                return ['success' => false, 'message' => '滑动轨迹异常，请重试'];
+            }
+        }
+
+        return ['success' => true, 'message' => '轨迹验证通过'];
+    }
+
+    /**
+     * 计算数组方差
+     *
+     * @param array $values 数值数组
+     *
+     * @return float 方差值
+     */
+    private function calculateVariance(array $values): float
+    {
+        $count = count($values);
+        if ($count < 2) {
+            return 0.0;
+        }
+
+        $mean = array_sum($values) / $count;
+        $sumSquaredDiff = 0.0;
+        foreach ($values as $value) {
+            $diff = $value - $mean;
+            $sumSquaredDiff += $diff * $diff;
+        }
+
+        return $sumSquaredDiff / $count;
+    }
+
+    /**
      * 检查验证码是否已通过验证（向后兼容）
      *
      * @return bool 是否已通过验证
@@ -1666,7 +1992,7 @@ class Captcha
             throw new RuntimeException('没有可用的背景图片，请配置背景图片');
         }
 
-        $bgFile = $images[array_rand($images)];
+        $bgFile = $images[$this->secureRandomIndex($images)];
 
         if (!file_exists($bgFile) || !is_readable($bgFile)) {
             throw new RuntimeException('背景图片不存在或无法读取: ' . $bgFile);

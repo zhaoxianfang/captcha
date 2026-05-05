@@ -152,14 +152,18 @@ class CaptchaService extends Service
             $offset = request()->get('captcha_r') ?? request()->post('captcha_r');
             $token = request()->get('xf_captcha_token') ?? request()->post('xf_captcha_token');
             $clickPoints = request()->get('click_points') ?? request()->post('click_points');
+            $slideTrack = request()->get('slide_track') ?? request()->post('slide_track');
 
-            // 解析点击坐标
+            // 解析点击坐标和滑动轨迹
             if (is_string($clickPoints)) {
                 $clickPoints = json_decode($clickPoints, true) ?: [];
             }
+            if (is_string($slideTrack)) {
+                $slideTrack = json_decode($slideTrack, true) ?: [];
+            }
 
             // 执行验证
-            $result = $captcha->verify($offset, $token, $clickPoints);
+            $result = $captcha->verify($offset, $token, (array) $clickPoints, (array) $slideTrack);
 
             $response = [
                 'success' => $result['success'],

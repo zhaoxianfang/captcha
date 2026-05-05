@@ -231,13 +231,17 @@ class CaptchaController
             $offset = $this->getRequestParam('captcha_r');
             $token = $this->getRequestParam('xf_captcha_token');
             $clickPoints = $this->getRequestParam('click_points', []);
+            $slideTrack = $this->getRequestParam('slide_track', []);
 
-            // 解析点击坐标
+            // 解析点击坐标和滑动轨迹
             if (is_string($clickPoints)) {
                 $clickPoints = json_decode($clickPoints, true) ?: [];
             }
+            if (is_string($slideTrack)) {
+                $slideTrack = json_decode($slideTrack, true) ?: [];
+            }
 
-            $result = $this->captcha->verify($offset, $token, (array) $clickPoints);
+            $result = $this->captcha->verify($offset, $token, (array) $clickPoints, (array) $slideTrack);
 
             $response = [
                 'success' => $result['success'],

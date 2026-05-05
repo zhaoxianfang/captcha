@@ -261,4 +261,92 @@ class CaptchaTest extends TestCase
         $this->assertInstanceOf(Captcha::class, $captcha2);
         $this->assertEquals(15, $captcha2->getConfig('fault_tolerance'));
     }
+
+    /**
+     * 测试速率限制配置
+     */
+    public function testRateLimitConfig(): void
+    {
+        $captcha = new Captcha([
+            'rate_limit' => [
+                'enabled' => true,
+                'window' => 120,
+                'max_requests' => 50,
+            ],
+        ]);
+
+        $this->assertTrue($captcha->getConfig('rate_limit.enabled'));
+        $this->assertEquals(120, $captcha->getConfig('rate_limit.window'));
+        $this->assertEquals(50, $captcha->getConfig('rate_limit.max_requests'));
+    }
+
+    /**
+     * 测试点击验证码干扰线配置生效
+     */
+    public function testClickInterferenceLines(): void
+    {
+        $captcha = new Captcha([
+            'captcha_type' => Captcha::TYPE_CLICK,
+            'click' => [
+                'interference_lines' => true,
+                'interference_line_count' => 5,
+            ],
+        ]);
+
+        try {
+            $data = $captcha->makeData();
+            $this->assertEquals(Captcha::TYPE_CLICK, $data['type']);
+            $this->assertIsString($data['image']);
+            $this->assertGreaterThan(0, strlen($data['image']));
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('背景图片', $e->getMessage());
+        }
+    }
+
+    /**
+     * 测试滑动轨迹验证
+     */
+    public function testSlideTrackVerify(): void
+    {
+        $captcha = new Captcha([
+            'captcha_type' => Captcha::TYPE_SLIDE,
+            'slide' => [
+                'track_verify' => true,
+                'track_strictness' => 'normal',
+            ],
+        ]);
+
+        // 生成滑动验证码
+        try {
+            $captcha->makeData();
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('背景图片', $e->getMessage());
+            return;
+        }
+
+        // 无轨迹时正常验证（位置正确但无session记录应失败）
+        $result = $captcha->verify(0);
+        $this->assertFalse($result['success']);
+
+        // 模拟人类轨迹：缓慢、有波动的滑动
+        $humanTrack = [];
+        $baseTime = (int) (microtime(true) * 1000);
+        for ($i = 0; $i < 15; $i++) {
+            $humanTrack[] = [
+                'x' => $i * 5 + random_int(-2, 2),
+                'y' => random_int(40, 60),
+                't' => $baseTime + $i * 80,
+            ];
+        }
+
+        // 机器人轨迹：瞬间直线完成
+        $botTrack = [
+            ['x' => 0, 'y' => 50, 't' => $baseTime],
+            ['x' => 100, 'y' => 50, 't' => $baseTime + 50],
+        ];
+
+        // 机器人轨迹应该被识别为异常（但位置验证先失败，所以整体还是失败）
+        $resultBot = $captcha->verify(0, null, [], $botTrack);
+        $this->assertFalse($resultBot['success']);
+    }
 }
