@@ -361,10 +361,6 @@ class Captcha
                 'text_rotate' => true,
                 // 最大旋转角度（度数）
                 'max_rotate' => 30,
-                // 是否启用文字干扰线
-                'interference_lines' => true,
-                // 干扰线数量
-                'interference_line_count' => 3,
             ],
 
             // 滑动验证码配置
@@ -1136,44 +1132,8 @@ class Captcha
             }
         }
 
-        // 绘制干扰线（如果启用）
-        $this->drawInterferenceLines();
-
         // 输出图片
         return $this->outputImageToBuffer($this->imBg);
-    }
-
-    /**
-     * 绘制点击验证码干扰线
-     */
-    private function drawInterferenceLines(): void
-    {
-        $clickConfig = $this->config['click'] ?? [];
-        $enabled = (bool) ($clickConfig['interference_lines'] ?? true);
-        if (!$enabled) {
-            return;
-        }
-
-        $lineCount = $this->filterInt($clickConfig['interference_line_count'] ?? 3, 0, 10);
-        if ($lineCount <= 0 || $this->imBg === null) {
-            return;
-        }
-
-        for ($i = 0; $i < $lineCount; $i++) {
-            $x1 = $this->secureRandomInt(0, $this->bgWidth);
-            $y1 = $this->secureRandomInt(0, $this->bgHeight);
-            $x2 = $this->secureRandomInt(0, $this->bgWidth);
-            $y2 = $this->secureRandomInt(0, $this->bgHeight);
-
-            $r = $this->secureRandomInt(50, 200);
-            $g = $this->secureRandomInt(50, 200);
-            $b = $this->secureRandomInt(50, 200);
-            $color = imagecolorallocate($this->imBg, $r, $g, $b);
-
-            if ($color !== false) {
-                imageline($this->imBg, $x1, $y1, $x2, $y2, $color);
-            }
-        }
     }
 
     /**

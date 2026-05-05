@@ -401,12 +401,6 @@ return [
 
         // 最大旋转角度（度数）
         'max_rotate' => 30,
-
-        // 是否启用文字干扰线
-        'interference_lines' => true,
-
-        // 干扰线数量
-        'interference_line_count' => 3,
     ],
 
     /*

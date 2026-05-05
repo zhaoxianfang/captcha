@@ -135,16 +135,12 @@ class CaptchaTest extends TestCase
                 'font_size' => 28,
                 'text_rotate' => true,
                 'text_bg_overlay' => true,
-                'interference_lines' => true,
-                'interference_line_count' => 5,
             ],
         ]);
 
         $this->assertEquals(Captcha::TYPE_CLICK, $captcha->getConfig('captcha_type'));
         $this->assertEquals(3, $captcha->getConfig('click.char_count'));
         $this->assertEquals(28, $captcha->getConfig('click.font_size'));
-        $this->assertTrue($captcha->getConfig('click.interference_lines'));
-        $this->assertEquals(5, $captcha->getConfig('click.interference_line_count'));
     }
 
     /**
@@ -278,29 +274,6 @@ class CaptchaTest extends TestCase
         $this->assertTrue($captcha->getConfig('rate_limit.enabled'));
         $this->assertEquals(120, $captcha->getConfig('rate_limit.window'));
         $this->assertEquals(50, $captcha->getConfig('rate_limit.max_requests'));
-    }
-
-    /**
-     * 测试点击验证码干扰线配置生效
-     */
-    public function testClickInterferenceLines(): void
-    {
-        $captcha = new Captcha([
-            'captcha_type' => Captcha::TYPE_CLICK,
-            'click' => [
-                'interference_lines' => true,
-                'interference_line_count' => 5,
-            ],
-        ]);
-
-        try {
-            $data = $captcha->makeData();
-            $this->assertEquals(Captcha::TYPE_CLICK, $data['type']);
-            $this->assertIsString($data['image']);
-            $this->assertGreaterThan(0, strlen($data['image']));
-        } catch (\RuntimeException $e) {
-            $this->assertStringContainsString('背景图片', $e->getMessage());
-        }
     }
 
     /**
