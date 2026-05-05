@@ -26,7 +26,7 @@ use zxf\Captcha\Http\CaptchaController;
  * 该类为 Laravel 11+ 框架提供验证码服务的注册、配置加载和验证器扩展
  *
  * @author zhaoxianfang
- * @since  2.0.0
+ * @since  1.0.6
  */
 class CaptchaServiceProvider extends ServiceProvider
 {

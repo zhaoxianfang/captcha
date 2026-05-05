@@ -2,7 +2,7 @@
 
 [![PHP Version](https://img.shields.io/badge/php-%3E%3D8.2-8892BF.svg)](https://php.net/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-2.1.0-brightgreen.svg)]()
+[![Version](https://img.shields.io/badge/version-1.0.6-brightgreen.svg)]()
 
 高性能、安全、易用的滑动验证码 & 点击验证码 PHP 扩展包，支持 Laravel、ThinkPHP 等主流 PHP 框架，也可在原生 PHP 中使用。
 
@@ -860,53 +860,3 @@ xfCaptcha.init({
 
 MIT License
 
-## 👨‍💻 作者
-
-zhaoxianfang <zhaoxianfang@163.com>
-
-## 📝 更新日志
-
-### v2.2.0
-- **新增点击验证码**：支持按顺序点击图片中的文字/符号完成验证
-- **双模式支持**：支持滑动验证码、点击验证码以及随机切换模式（`slide`/`click`/`both`）
-- **安全增强**：新增请求指纹绑定（User-Agent + IP + 语言），防止 Session 劫持
-- **安全增强**：新增验证码过期机制（默认 10 分钟），防止长期重放攻击
-- **配置增强**：点击验证码支持完整的自定义配置（字符库、字体、颜色、旋转、遮罩等）
-- **UI 优化**：点击验证码文字字号加大、标记改为半透明、移除进度提示、隐藏滑动组件
-- **交互优化**：点击验证码光标改为 pointer，点击容错范围扩大，元素样式过渡更平滑
-- **字符库**：默认使用中文汉字 + 符号混合库，自动检测系统字体路径
-- **框架兼容**：ThinkPHP 补齐 `/data` 数据接口，与 Laravel 功能保持一致
-- **文档完善**：补充点击验证码使用说明、安全特性描述和完整配置示例
-
-### v2.1.0
-- **PHP 8.2-8.5 全面兼容**：代码优化支持 PHP 8.2、8.3、8.4、8.5
-- **安全增强**：`mt_rand` 全面替换为 `random_int`，随机数生成更加安全
-- **安全增强**：请求指纹生成增加更多特征维度（Accept-Encoding、Accept、时间窗口）
-- **安全增强**：验证码过期时间可配置（`captcha_expire`），默认 10 分钟
-- **安全增强**：新增滑动轨迹验证配置（`slide.track_verify`），可检测机器人行为
-- **逻辑优化**：`getConfig()` 支持点号分隔访问嵌套配置（如 `click.char_count`）
-- **逻辑优化**：统一图片输出逻辑，消除多处重复代码
-- **逻辑优化**：验证码类型保持会话一致性，避免随机切换导致的验证失败
-- **逻辑优化**：点击验证码字符分布算法优化，自适应网格大小，确保字符不重叠
-- **字符库优化**：去除重复字符，增加颜色字（黑、青、金），使用 Fisher-Yates 洗牌算法
-- **健壮性增强**：所有数值配置增加范围过滤（`filterInt`），防止非法值
-- **健壮性增强**：`ob_get_clean()` 返回值检查，防止输出缓冲区异常
-- **健壮性增强**：`getBgImages()` 增加路径验证和目录分隔符兼容性处理
-- **健壮性增强**：`CaptchaController` 新增 `getRequestParam()` 方法，兼容 JSON 请求体
-- **代码质量**：移除未使用的导入，优化异常捕获语法（PHP 8.0+）
-- **代码质量**：`imagedestroy` 调用增加 PHP 版本判断，兼容 PHP 8.0+
-- **HTTP 安全头**：图片输出增加 `X-Content-Type-Options: nosniff` 响应头
-
-### v2.0.0
-- 重构验证逻辑，支持三种验证模式
-- 新增双重验证模式，提高安全性
-- 优化移动端兼容性
-- 支持主题切换（浅色/深色/自动）
-- 新增 `reset()` 接口
-- 移除中间件配置
-- 修复已知问题
-
-### v1.0.0
-- 初始版本发布
-- 支持 Laravel 和 ThinkPHP
-- 基础滑动验证功能

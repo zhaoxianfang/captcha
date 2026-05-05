@@ -5,7 +5,7 @@
  *
  * @package     zxf\Captcha
  * @license     MIT
- * @version     2.1.0
+ * @version     1.0.6
  */
 
 declare(strict_types=1);
@@ -22,7 +22,7 @@ use RuntimeException;
  * 支持自定义背景图片、滑块样式、容错精度等配置
  *
  * @since  1.0.0
- * @since  2.0.0 新增点击验证码支持
+ * @since  1.0.6 新增点击验证码支持
  */
 class Captcha
 {
@@ -564,7 +564,7 @@ class Captcha
         }
 
         $images = [];
-        $extensions = ['png', 'jpg', 'jpeg', 'gif', 'webp'];
+        $extensions = ['jpg', 'png', 'jpeg', 'gif', 'webp'];
 
         $files = scandir($bgDir);
         if ($files === false) {

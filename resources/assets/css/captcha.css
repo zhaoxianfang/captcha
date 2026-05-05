@@ -3,7 +3,7 @@
  *
  * @package     zxf/captcha
  * @license     MIT
- * @version     2.1.0
+ * @version     1.0.6
  */
 
 /* ============================================
@@ -242,6 +242,7 @@
     z-index: 1;
     border-radius: 6px;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+    border: 0;
 }
 
 .captcha_canvas_mark {
@@ -564,7 +565,7 @@
 .captcha_div[data-type="click"] .captcha_canvas_bg {
     cursor: pointer;
     pointer-events: auto;
-    border: 2px solid #e6f7ff;
+    /*border: 2px solid #e6f7ff;*/
     box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.2);
 }
 

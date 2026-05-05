@@ -3,7 +3,7 @@
  *
  * @package     zxf/captcha
  * @license     MIT
- * @version     2.1.0
+ * @version     1.0.6
  */
 (function (window, document) {
     "use strict";
@@ -257,8 +257,8 @@
             const evt = e.touches ? e.touches[0] : e;
 
             // 隐藏提示文字
-            const textElem = document.querySelector(".captcha_slide_text");
-            if (textElem) textElem.style.display = "none";
+            // const textElem = document.querySelector(".captcha_slide_text");
+            // if (textElem) textElem.style.display = "none";
 
             xfCaptcha._drawBg();
             xfCaptcha._blockStartX = evt.clientX;

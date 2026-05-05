@@ -33,7 +33,7 @@ if (!function_exists('isLaravel')) {
  * - 提供静态资源（JS、CSS、图标）
  *
  * @author zhaoxianfang
- * @since  2.0.0
+ * @since  1.0.6
  */
 class CaptchaController
 {

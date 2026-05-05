@@ -20,7 +20,7 @@ use zxf\Captcha\Captcha;
  * 用于在不支持服务提供者的框架或原生 PHP 中使用验证码
  *
  * @author zhaoxianfang
- * @since  2.0.0
+ * @since  1.0.6
  */
 class Adapter
 {

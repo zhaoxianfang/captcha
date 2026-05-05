@@ -21,7 +21,7 @@ use zxf\Captcha\Captcha;
  * ThinkPHP 8+ 验证码服务类
  *
  * @author zhaoxianfang
- * @since  2.0.0
+ * @since  1.0.6
  */
 class CaptchaService extends Service
 {
