@@ -68,6 +68,43 @@ class CaptchaController
     }
 
     /**
+     * 获取请求参数（兼容 Laravel 和原生 PHP）
+     *
+     * @param string $key     参数名
+     * @param mixed  $default 默认值
+     *
+     * @return mixed 参数值
+     */
+    protected function getRequestParam(string $key, mixed $default = null): mixed
+    {
+        // 优先使用 Laravel 的 request 辅助函数
+        if (function_exists('request')) {
+            $value = request($key);
+            return $value !== null ? $value : $default;
+        }
+
+        // 原生 PHP：检查 POST、GET 和 JSON 输入
+        if (isset($_POST[$key])) {
+            return $_POST[$key];
+        }
+
+        if (isset($_GET[$key])) {
+            return $_GET[$key];
+        }
+
+        // 检查 JSON 输入
+        $input = file_get_contents('php://input');
+        if (!empty($input)) {
+            $data = json_decode($input, true);
+            if (is_array($data) && array_key_exists($key, $data)) {
+                return $data[$key];
+            }
+        }
+
+        return $default;
+    }
+
+    /**
      * 获取配置
      *
      * @return array
@@ -191,16 +228,16 @@ class CaptchaController
     public function check(): mixed
     {
         try {
-            $offset = request('captcha_r') ?? $_REQUEST['captcha_r'] ?? null;
-            $token = request('xf_captcha_token') ?? $_REQUEST['xf_captcha_token'] ?? null;
-            $clickPoints = request('click_points') ?? $_REQUEST['click_points'] ?? [];
+            $offset = $this->getRequestParam('captcha_r');
+            $token = $this->getRequestParam('xf_captcha_token');
+            $clickPoints = $this->getRequestParam('click_points', []);
 
             // 解析点击坐标
             if (is_string($clickPoints)) {
                 $clickPoints = json_decode($clickPoints, true) ?: [];
             }
 
-            $result = $this->captcha->verify($offset, $token, $clickPoints);
+            $result = $this->captcha->verify($offset, $token, (array) $clickPoints);
 
             $response = [
                 'success' => $result['success'],
@@ -338,9 +375,9 @@ class CaptchaController
      * @param string $message 错误消息
      * @param int    $code    HTTP 状态码
      *
-     * @return void
+     * @return null
      */
-    protected function sendError(string $message, int $code = 500): void
+    protected function sendError(string $message, int $code = 500): null
     {
         while (ob_get_level() > 0) {
             ob_end_clean();
@@ -351,6 +388,7 @@ class CaptchaController
         }
 
         echo $message;
+        return null;
     }
 
     /**

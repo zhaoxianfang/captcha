@@ -22,7 +22,7 @@ use Illuminate\Support\Facades\Facade;
  * @method static \zxf\Captcha\Captcha getFacadeRoot()
  * @method static void make(array $bgImages = [])
  * @method static string makeRaw(array $bgImages = [])
- * @method static bool check(string|int $offset = '')
+ * @method static array verify(string|int|null $offset = null, ?string $token = null, array $clickPoints = [])
  * @method static bool isChecked()
  * @method static void refresh()
  * @method static mixed getConfig(string $key, mixed $default = null)

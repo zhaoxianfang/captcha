@@ -135,12 +135,44 @@ class CaptchaTest extends TestCase
                 'font_size' => 28,
                 'text_rotate' => true,
                 'text_bg_overlay' => true,
+                'interference_lines' => true,
+                'interference_line_count' => 5,
             ],
         ]);
 
         $this->assertEquals(Captcha::TYPE_CLICK, $captcha->getConfig('captcha_type'));
         $this->assertEquals(3, $captcha->getConfig('click.char_count'));
         $this->assertEquals(28, $captcha->getConfig('click.font_size'));
+        $this->assertTrue($captcha->getConfig('click.interference_lines'));
+        $this->assertEquals(5, $captcha->getConfig('click.interference_line_count'));
+    }
+
+    /**
+     * 测试验证码过期配置
+     */
+    public function testCaptchaExpireConfig(): void
+    {
+        $captcha = new Captcha([
+            'captcha_expire' => 300,
+        ]);
+
+        $this->assertEquals(300, $captcha->getConfig('captcha_expire'));
+    }
+
+    /**
+     * 测试滑动验证码轨迹验证配置
+     */
+    public function testSlideTrackVerifyConfig(): void
+    {
+        $captcha = new Captcha([
+            'slide' => [
+                'track_verify' => true,
+                'track_strictness' => 'strict',
+            ],
+        ]);
+
+        $this->assertTrue($captcha->getConfig('slide.track_verify'));
+        $this->assertEquals('strict', $captcha->getConfig('slide.track_strictness'));
     }
 
     /**

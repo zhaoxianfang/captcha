@@ -146,7 +146,7 @@ if (!function_exists('xf_captcha_html')) {
             'showClose' => $frontend['show_close'] ?? true,
             'showRefresh' => $frontend['show_refresh'] ?? true,
             'showRipple' => $frontend['show_ripple'] ?? true,
-        ]);
+        ], JSON_UNESCAPED_UNICODE);
 
         return <<<HTML
 <div class="xf-captcha" id="xf-captcha-{$selector}"></div>
@@ -197,7 +197,7 @@ if (!function_exists('xf_captcha_script')) {
             'showClose' => $frontend['show_close'] ?? true,
             'showRefresh' => $frontend['show_refresh'] ?? true,
             'showRipple' => $frontend['show_ripple'] ?? true,
-        ]);
+        ], JSON_UNESCAPED_UNICODE);
 
         return <<<JS
 <script>

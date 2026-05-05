@@ -5,7 +5,7 @@
  *
  * @package     zxf\Captcha
  * @license     MIT
- * @version     2.0.0
+ * @version     2.1.0
  */
 
 declare(strict_types=1);
@@ -14,7 +14,6 @@ namespace zxf\Captcha;
 
 use GdImage;
 use RuntimeException;
-use InvalidArgumentException;
 
 /**
  * 滑动验证码 & 点击验证码核心类
@@ -56,6 +55,31 @@ class Captcha
      * 验证模式：前端+后端双重验证（推荐）
      */
     public const VERIFY_DUAL = 'dual';
+
+    /** 默认图片输出格式 */
+    private const DEFAULT_OUTPUT_FORMAT = 'webp';
+
+    /** 默认 WebP 质量 */
+    private const DEFAULT_WEBP_QUALITY = 40;
+
+    /** 默认 PNG 压缩级别 */
+    private const DEFAULT_PNG_QUALITY = 7;
+
+    /** 验证码默认过期时间（秒） */
+    private const DEFAULT_CAPTCHA_EXPIRE = 600;
+
+    /** 最小滑块宽度 */
+    /** 默认最小滑块宽度 */
+    private const DEFAULT_MIN_MARK_WIDTH = 30;
+
+    /** 默认最大滑块宽度 */
+    private const DEFAULT_MAX_MARK_WIDTH = 80;
+
+    /** 默认最小滑块高度 */
+    private const DEFAULT_MIN_MARK_HEIGHT = 30;
+
+    /** 默认最大滑块高度 */
+    private const DEFAULT_MAX_MARK_HEIGHT = 80;
 
     /**
      * 完整背景图片资源
@@ -278,13 +302,13 @@ class Captcha
             'mark_height' => 50,
 
             // 图片输出格式
-            'output_format' => 'webp',
+            'output_format' => self::DEFAULT_OUTPUT_FORMAT,
 
             // WebP 图片质量
-            'webp_quality' => 40,
+            'webp_quality' => self::DEFAULT_WEBP_QUALITY,
 
             // PNG 图片压缩级别
-            'png_quality' => 7,
+            'png_quality' => self::DEFAULT_PNG_QUALITY,
 
             // Session 前缀
             'session_prefix' => 'xf_captcha',
@@ -294,6 +318,9 @@ class Captcha
 
             // Token过期时间（秒）
             'token_expire' => 300,
+
+            // 验证码过期时间（秒）
+            'captcha_expire' => self::DEFAULT_CAPTCHA_EXPIRE,
 
             // 点击验证码配置
             'click' => [
@@ -319,6 +346,10 @@ class Captcha
                 'text_rotate' => true,
                 // 最大旋转角度（度数）
                 'max_rotate' => 30,
+                // 是否启用文字干扰线
+                'interference_lines' => true,
+                // 干扰线数量
+                'interference_line_count' => 3,
             ],
 
             // 滑动验证码配置
@@ -329,6 +360,10 @@ class Captcha
                 'mark_height' => 50,
                 // 滑动容错像素值
                 'fault_tolerance' => 3,
+                // 是否启用轨迹验证（增强安全性，检测机器人）
+                'track_verify' => true,
+                // 轨迹验证严格程度：'strict' | 'normal' | 'loose'
+                'track_strictness' => 'normal',
             ],
         ];
     }
@@ -338,20 +373,28 @@ class Captcha
      */
     private function applyConfig(): void
     {
-        $this->bgWidth = (int) ($this->config['bg_width'] ?? 240);
-        $this->bgHeight = (int) ($this->config['bg_height'] ?? 150);
-        $this->maxErrorCount = (int) ($this->config['max_error_count'] ?? 10);
-        $this->tokenExpire = (int) ($this->config['token_expire'] ?? 300);
+        $this->bgWidth = $this->filterInt($this->config['bg_width'] ?? 240, 100, 800);
+        $this->bgHeight = $this->filterInt($this->config['bg_height'] ?? 150, 50, 600);
+        $this->maxErrorCount = $this->filterInt($this->config['max_error_count'] ?? 10, 1, 100);
+        $this->tokenExpire = $this->filterInt($this->config['token_expire'] ?? 300, 30, 3600);
 
         // 滑动验证码配置 - 优先从 slide 数组读取，兼容顶层配置
         $slideConfig = $this->config['slide'] ?? [];
-        $this->markWidth = (int) ($slideConfig['mark_width'] ?? $this->config['mark_width'] ?? 50);
-        $this->markHeight = (int) ($slideConfig['mark_height'] ?? $this->config['mark_height'] ?? 50);
-        $this->faultTolerance = (int) ($slideConfig['fault_tolerance'] ?? $this->config['fault_tolerance'] ?? 3);
+        $this->markWidth = $this->filterInt(
+            $slideConfig['mark_width'] ?? $this->config['mark_width'] ?? 50,
+            self::DEFAULT_MIN_MARK_WIDTH,
+            self::DEFAULT_MAX_MARK_WIDTH
+        );
+        $this->markHeight = $this->filterInt(
+            $slideConfig['mark_height'] ?? $this->config['mark_height'] ?? 50,
+            self::DEFAULT_MIN_MARK_HEIGHT,
+            self::DEFAULT_MAX_MARK_HEIGHT
+        );
+        $this->faultTolerance = $this->filterInt($slideConfig['fault_tolerance'] ?? $this->config['fault_tolerance'] ?? 3, 0, 20);
 
         // 点击验证码容错值
         $clickConfig = $this->config['click'] ?? [];
-        $this->clickFaultTolerance = (int) ($clickConfig['fault_tolerance'] ?? 25);
+        $this->clickFaultTolerance = $this->filterInt($clickConfig['fault_tolerance'] ?? 25, 5, 100);
 
         // 设置 Session 键名
         $prefix = $this->config['session_prefix'] ?? 'xf_captcha';
@@ -377,14 +420,39 @@ class Captcha
 
     /**
      * 生成请求指纹
+     *
+     * 使用多种请求特征生成唯一指纹，用于防止会话劫持和验证请求来源一致性
      */
     private function generateFingerprint(): string
     {
-        $parts = [];
-        $parts[] = $_SERVER['HTTP_USER_AGENT'] ?? 'unknown';
-        $parts[] = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
-        $parts[] = $_SERVER['HTTP_ACCEPT_LANGUAGE'] ?? 'unknown';
-        return hash('sha256', implode('|', $parts));
+        $features = [
+            $_SERVER['HTTP_USER_AGENT'] ?? 'unknown',
+            $_SERVER['REMOTE_ADDR'] ?? ($_SERVER['HTTP_X_FORWARDED_FOR'] ?? '0.0.0.0'),
+            $_SERVER['HTTP_ACCEPT_LANGUAGE'] ?? 'unknown',
+            $_SERVER['HTTP_ACCEPT_ENCODING'] ?? 'unknown',
+            $_SERVER['HTTP_ACCEPT'] ?? 'unknown',
+        ];
+
+        // 添加时间窗口（每10分钟变化一次，允许同一设备在一定时间内保持验证）
+        $timeWindow = (int) (time() / 600);
+        $features[] = (string) $timeWindow;
+
+        return hash('sha256', implode('|', $features));
+    }
+
+    /**
+     * 过滤整数值到指定范围
+     *
+     * @param mixed $value 输入值
+     * @param int   $min   最小值
+     * @param int   $max   最大值
+     *
+     * @return int 过滤后的值
+     */
+    private function filterInt(mixed $value, int $min, int $max): int
+    {
+        $int = (int) $value;
+        return max($min, min($max, $int));
     }
 
     /**
@@ -434,13 +502,24 @@ class Captcha
             // 获取当前 session 中的类型
             $currentType = $this->getSessionValue($this->sessionKeyType);
 
-            // 如果强制切换或 session 中没有类型，则切换为另一种
+            // 如果强制切换且 session 中有类型，则切换为另一种
             if ($forceSwitch && $currentType !== null) {
                 return $currentType === self::TYPE_SLIDE ? self::TYPE_CLICK : self::TYPE_SLIDE;
             }
 
-            // 随机选择
-            return mt_rand(0, 1) === 0 ? self::TYPE_SLIDE : self::TYPE_CLICK;
+            // 如果有当前类型，保持类型一致性
+            if ($currentType !== null) {
+                return in_array($currentType, [self::TYPE_SLIDE, self::TYPE_CLICK], true)
+                    ? $currentType
+                    : self::TYPE_SLIDE;
+            }
+
+            // 首次随机选择，使用 random_int 替代 mt_rand 增强安全性
+            try {
+                return random_int(0, 1) === 0 ? self::TYPE_SLIDE : self::TYPE_CLICK;
+            } catch (\Exception) {
+                return self::TYPE_SLIDE;
+            }
         }
 
         return in_array($configType, [self::TYPE_SLIDE, self::TYPE_CLICK], true)
@@ -456,25 +535,39 @@ class Captcha
     private function getBgImages(): array
     {
         if (!empty($this->config['bg_images'])) {
-            return $this->config['bg_images'];
+            $images = [];
+            foreach ($this->config['bg_images'] as $img) {
+                if (is_string($img) && file_exists($img)) {
+                    $images[] = $img;
+                }
+            }
+            return $images;
         }
 
-        $bgDir = $this->config['bg_images_dir'];
-        if (!is_dir($bgDir)) {
+        $bgDir = $this->config['bg_images_dir'] ?? '';
+        if (empty($bgDir) || !is_dir($bgDir)) {
             return [];
         }
 
         $images = [];
         $extensions = ['png', 'jpg', 'jpeg', 'gif', 'webp'];
 
-        foreach (scandir($bgDir) as $file) {
+        $files = scandir($bgDir);
+        if ($files === false) {
+            return [];
+        }
+
+        foreach ($files as $file) {
             if ($file === '.' || $file === '..') {
                 continue;
             }
 
             $ext = strtolower(pathinfo($file, PATHINFO_EXTENSION));
             if (in_array($ext, $extensions, true)) {
-                $images[] = $bgDir . $file;
+                $fullPath = rtrim($bgDir, '/\\') . DIRECTORY_SEPARATOR . $file;
+                if (file_exists($fullPath)) {
+                    $images[] = $fullPath;
+                }
             }
         }
 
@@ -486,12 +579,14 @@ class Captcha
      */
     private function ensureSessionStarted(): void
     {
-        if (session_status() === PHP_SESSION_ACTIVE) {
+        $status = session_status();
+
+        if ($status === PHP_SESSION_ACTIVE) {
             return;
         }
 
-        if (session_status() === PHP_SESSION_NONE) {
-            if (php_sapi_name() === 'cli') {
+        if ($status === PHP_SESSION_NONE) {
+            if (PHP_SAPI === 'cli') {
                 $this->useMockSession = true;
                 return;
             }
@@ -585,7 +680,7 @@ class Captcha
             $this->createBg();
             $this->merge();
 
-            $imageData = $this->getImageData();
+            $imageData = $this->outputImageToBuffer($this->im);
             $this->destroy();
 
             return [
@@ -596,6 +691,7 @@ class Captcha
                 'bg_height' => $this->bgHeight,
                 'mark_width' => $this->markWidth,
                 'mark_height' => $this->markHeight,
+                'char_count' => 0,
                 'hint' => '拖动左边滑块完成上方拼图',
             ];
         } catch (\Throwable $e) {
@@ -656,7 +752,7 @@ class Captcha
             throw new RuntimeException('没有可用的背景图片，请配置背景图片');
         }
 
-        $bgFile = $images[array_rand($images)];
+        $bgFile = $images[$this->secureRandomIndex($images)];
 
         if (!file_exists($bgFile) || !is_readable($bgFile)) {
             throw new RuntimeException('背景图片不存在或无法读取: ' . $bgFile);
@@ -688,29 +784,49 @@ class Captcha
     }
 
     /**
+     * 安全的随机索引选择
+     *
+     * @param array $array 输入数组
+     *
+     * @return int 随机索引
+     */
+    private function secureRandomIndex(array $array): int
+    {
+        $count = count($array);
+        if ($count <= 1) {
+            return 0;
+        }
+
+        try {
+            return random_int(0, $count - 1);
+        } catch (\Exception) {
+            return (int) floor($count * (microtime(true) - (int) microtime(true))) % $count;
+        }
+    }
+
+    /**
      * 生成点击验证码的随机位置数据
      * 使用改进的分布算法，确保字符分布均匀且不重叠
      */
     private function generateClickData(): void
     {
         $clickConfig = $this->config['click'] ?? [];
-        $charCount = (int) ($clickConfig['char_count'] ?? 4);
+        $charCount = $this->filterInt($clickConfig['char_count'] ?? 4, 1, 8);
 
         // 获取字符库
         $chars = $this->getClickChars();
-        shuffle($chars);
 
         $this->clickData = [];
-        $padding = 35; // 边缘留白增加
-        $minDistance = 50; // 字符间最小距离增加
-        $maxAttempts = 100; // 增加最大尝试次数
+        $padding = max(35, (int) ($this->bgWidth * 0.12)); // 动态边缘留白
+        $minDistance = max(40, (int) ($this->bgWidth * 0.15)); // 动态最小距离
+        $maxAttempts = 200; // 增加最大尝试次数
 
-        // 将画布分为网格，确保更好的分布
-        $gridCols = 2;
-        $gridRows = 2;
+        // 自适应网格大小
+        $gridCols = min($charCount, max(2, (int) ceil(sqrt($charCount * 1.5))));
+        $gridRows = max(2, (int) ceil($charCount / $gridCols));
         $cellWidth = ($this->bgWidth - $padding * 2) / $gridCols;
         $cellHeight = ($this->bgHeight - $padding * 2) / $gridRows;
-        
+
         $usedCells = [];
 
         for ($i = 0; $i < $charCount; $i++) {
@@ -719,28 +835,40 @@ class Captcha
 
             while (!$placed && $attempts < $maxAttempts) {
                 // 优先在未使用的网格中放置
-                if ($i < $gridCols * $gridRows && empty($usedCells)) {
-                    $cellIndex = $i;
-                    $gridX = $cellIndex % $gridCols;
-                    $gridY = (int) ($cellIndex / $gridCols);
-                    $usedCells[] = $cellIndex;
+                if ($i < $gridCols * $gridRows) {
+                    $availableCells = array_diff(range(0, $gridCols * $gridRows - 1), $usedCells);
+                    if (!empty($availableCells)) {
+                        $cellIndex = array_values($availableCells)[0];
+                        $usedCells[] = $cellIndex;
+                    } else {
+                        $cellIndex = $this->secureRandomIndex(range(0, $gridCols * $gridRows - 1));
+                    }
                 } else {
-                    $gridX = mt_rand(0, $gridCols - 1);
-                    $gridY = mt_rand(0, $gridRows - 1);
+                    $cellIndex = $this->secureRandomIndex(range(0, $gridCols * $gridRows - 1));
                 }
 
-                // 在网格内随机位置
+                $gridX = $cellIndex % $gridCols;
+                $gridY = (int) ($cellIndex / $gridCols);
+
+                // 在网格内随机位置，留有一定边距
+                $margin = 20;
                 $baseX = $padding + $gridX * $cellWidth;
                 $baseY = $padding + $gridY * $cellHeight;
-                $x = mt_rand((int) $baseX, (int) ($baseX + $cellWidth - 20));
-                $y = mt_rand((int) $baseY, (int) ($baseY + $cellHeight - 20));
+
+                $maxRandX = max(0, (int) ($baseX + $cellWidth - $margin) - (int) ($baseX + $margin));
+                $maxRandY = max(0, (int) ($baseY + $cellHeight - $margin) - (int) ($baseY + $margin));
+
+                $x = (int) ($baseX + $margin + $this->secureRandomInt(0, max(1, $maxRandX)));
+                $y = (int) ($baseY + $margin + $this->secureRandomInt(0, max(1, $maxRandY)));
+
+                // 边界检查
+                $x = max($padding, min($this->bgWidth - $padding, $x));
+                $y = max($padding, min($this->bgHeight - $padding, $y));
 
                 // 检查与其他字符的距离
                 $tooClose = false;
                 foreach ($this->clickData as $existing) {
-                    $distance = sqrt(
-                        pow($x - $existing['x'], 2) + pow($y - $existing['y'], 2)
-                    );
+                    $distance = hypot($x - $existing['x'], $y - $existing['y']);
                     if ($distance < $minDistance) {
                         $tooClose = true;
                         break;
@@ -749,7 +877,7 @@ class Captcha
 
                 if (!$tooClose) {
                     $this->clickData[] = [
-                        'char' => $chars[$i] ?? $chars[array_rand($chars)],
+                        'char' => $chars[$i] ?? $chars[$this->secureRandomIndex($chars)],
                         'x' => $x,
                         'y' => $y,
                         'order' => $i + 1,
@@ -763,12 +891,33 @@ class Captcha
             // 如果无法放置，使用随机位置
             if (!$placed) {
                 $this->clickData[] = [
-                    'char' => $chars[$i] ?? $chars[array_rand($chars)],
-                    'x' => mt_rand($padding, $this->bgWidth - $padding),
-                    'y' => mt_rand($padding, $this->bgHeight - $padding),
+                    'char' => $chars[$i] ?? $chars[$this->secureRandomIndex($chars)],
+                    'x' => $this->secureRandomInt($padding, max($padding + 1, $this->bgWidth - $padding)),
+                    'y' => $this->secureRandomInt($padding, max($padding + 1, $this->bgHeight - $padding)),
                     'order' => $i + 1,
                 ];
             }
+        }
+    }
+
+    /**
+     * 安全的随机整数生成
+     *
+     * @param int $min 最小值
+     * @param int $max 最大值
+     *
+     * @return int 随机整数
+     */
+    private function secureRandomInt(int $min, int $max): int
+    {
+        if ($min >= $max) {
+            return $min;
+        }
+
+        try {
+            return random_int($min, $max);
+        } catch (\Exception) {
+            return (int) floor($min + ($max - $min + 1) * (microtime(true) - (int) microtime(true))) % ($max - $min + 1) + $min;
         }
     }
 
@@ -782,23 +931,49 @@ class Captcha
         $clickConfig = $this->config['click'] ?? [];
         $customChars = $clickConfig['chars'] ?? [];
 
-        if (!empty($customChars)) {
-            return $customChars;
+        if (!empty($customChars) && is_array($customChars)) {
+            return array_values(array_unique(array_filter($customChars, 'is_string')));
         }
 
-        // 默认使用中文汉字 + 小图标符号混合库，增强可读性和趣味性
+        // 默认使用中文汉字库，去重并按使用频率分组
         $mixedChars = [
-            // 常见中文汉字（直观易辨认）
-            '天', '地', '人', '和', '大', '小', '多', '少', '上', '下',
-            '左', '右', '前', '后', '里', '外', '中', '心', '口', '手',
-            '平', '安', '福', '喜', '乐', '美', '好', '真', '善', '诚',
-            '爱', '友', '家', '春', '夏', '秋', '冬', '风', '雨', '雪',
-            '山', '水', '花', '草', '树', '鸟', '鱼', '虫', '日', '月',
-            '星', '云', '红', '黄', '蓝', '绿', '白', '黑', '金', '木',
-            '东', '西', '南', '北', '高', '低', '长', '短', '圆', '方',
-            // 小图标符号（醒目易识别）...
+            // 高频常用汉字（优先使用）
+            '的', '是', '了', '我', '不', '人', '在', '他', '有', '这',
+            '个', '上', '们', '来', '到', '说', '去', '你', '会', '也',
+            '对', '生', '可', '以', '那', '大', '子', '得', '就', '下',
+            '地', '天', '时', '要', '出', '小', '还', '自', '己', '好',
+            '过', '家', '和', '她', '起', '把', '年', '样', '能', '没',
+            '多', '么', '后', '只', '想', '看', '真', '太', '点', '女',
+            '孩', '儿', '做', '都', '听', '笑', '回', '走', '里', '两',
+            '道', '进', '很', '老', '月', '问', '让', '给', '手', '头',
+            '面', '比', '关', '外', '高', '长', '见', '立', '中', '心',
+            '公', '开', '水', '名', '叫', '当', '男', '用', '分', '合',
+            '该', '话', '动', '新', '之', '如', '从', '等', '现', '制',
+            '度', '表', '重', '应', '间', '事', '或', '别', '期', '活',
+            '各', '少', '经', '体', '意', '主', '结', '果', '利', '实',
+            '其', '相', '义', '第', '此', '明', '加', '定', '常', '量',
+            '直', '总', '部', '种', '被', '任', '再', '便', '林', '气',
+            '请', '教', '妈', '爸', '爷', '奶', '师', '学', '校', '书',
+            '读', '写', '画', '玩', '跑', '跳', '吃', '喝', '睡', '衣',
+            '服', '车', '路', '花', '草', '山', '石', '田', '云', '风',
+            '雨', '雪', '电', '光', '火', '木', '米', '饭', '菜', '肉',
+            '鱼', '爱', '哭', '喊', '推', '拉', '抱', '亲', '帮', '忙',
+            '借', '还', '买', '卖', '坐', '站', '躺', '洗', '刷', '扫',
+            '擦', '切', '炒', '煮', '蒸', '烤', '甜', '酸', '苦', '辣',
+            '咸', '胖', '瘦', '矮', '短', '粗', '细', '快', '慢', '早',
+            '晚', '春', '夏', '秋', '冬', '星', '温', '暖', '凉', '冷',
+            '热', '干', '湿', '旧', '正', '反', '左', '右', '前', '后',
+            '里', '东', '西', '南', '北', '旁', '边', '处', '方', '向',
+            '颜', '色', '红', '黄', '蓝', '白', '紫', '黑', '青', '金',
         ];
-        shuffle($mixedChars);
+
+        // 使用 secureRandomIndex 进行 Fisher-Yates 洗牌
+        $count = count($mixedChars);
+        for ($i = $count - 1; $i > 0; $i--) {
+            $j = $this->secureRandomInt(0, $i);
+            [$mixedChars[$i], $mixedChars[$j]] = [$mixedChars[$j], $mixedChars[$i]];
+        }
+
         return $mixedChars;
     }
 
@@ -834,20 +1009,20 @@ class Captcha
 
             // 随机旋转角度（仅 TTF 字体支持）
             if ($hasTtf && $textRotate) {
-                $rotateAngle = mt_rand(-$maxRotate, $maxRotate);
+                $rotateAngle = $this->secureRandomInt(-$maxRotate, $maxRotate);
             }
 
             // 随机颜色（避免太浅或与背景相近的颜色）
             if (!empty($fontColor) && count($fontColor) >= 3) {
                 $color = imagecolorallocate($this->imBg, $fontColor[0], $fontColor[1], $fontColor[2]);
             } else {
-                $r = mt_rand(30, 210);
-                $g = mt_rand(30, 210);
-                $b = mt_rand(30, 210);
+                $r = $this->secureRandomInt(30, 210);
+                $g = $this->secureRandomInt(30, 210);
+                $b = $this->secureRandomInt(30, 210);
                 // 确保颜色有足够对比度（避免接近灰色）
                 if (abs($r - $g) < 20 && abs($g - $b) < 20) {
-                    $r = mt_rand(0, 100);
-                    $b = mt_rand(150, 255);
+                    $r = $this->secureRandomInt(0, 100);
+                    $b = $this->secureRandomInt(150, 255);
                 }
                 $color = imagecolorallocate($this->imBg, $r, $g, $b);
             }
@@ -922,17 +1097,7 @@ class Captcha
         }
 
         // 输出图片
-        $format = $this->getOutputFormat();
-        $quality = $format === 'webp'
-            ? (int) ($this->config['webp_quality'] ?? 40)
-            : (int) ($this->config['png_quality'] ?? 7);
-
-        ob_start();
-        $func = 'image' . $format;
-        $func($this->imBg, null, $quality);
-        $data = ob_get_clean();
-
-        return $data ?: '';
+        return $this->outputImageToBuffer($this->imBg);
     }
 
     /**
@@ -941,7 +1106,7 @@ class Captcha
     private function findSystemFont(): string
     {
         $possiblePaths = [
-            dirname(__FILE__, 2) . '/resources/assets/font/CorpSrcWinSong.ttf', // 司源赢宋
+            dirname(__FILE__, 2) . '/resources/assets/font/custom.ttf', // 使用猫啃网-字体传奇特战体-剪辑出高频常用的前250个汉字
         ];
 
         foreach ($possiblePaths as $path) {
@@ -954,23 +1119,53 @@ class Captcha
     }
 
     /**
-     * 获取图片数据
+     * 将图片资源输出为二进制数据
+     *
+     * @param GdImage $image  图片资源
+     * @param bool    $toBase64 是否返回 base64 编码
+     *
+     * @return string 图片二进制数据或 base64 字符串
+     */
+    private function outputImageToBuffer(GdImage $image, bool $toBase64 = false): string
+    {
+        $format = $this->getOutputFormat();
+        $quality = $format === 'webp'
+            ? $this->filterInt($this->config['webp_quality'] ?? self::DEFAULT_WEBP_QUALITY, 0, 100)
+            : $this->filterInt($this->config['png_quality'] ?? self::DEFAULT_PNG_QUALITY, 0, 9);
+
+        ob_start();
+        $func = 'image' . $format;
+
+        match ($format) {
+            'png' => $func($image, null, $quality),
+            default => $func($image, null, $quality),
+        };
+
+        $data = ob_get_clean();
+
+        if ($data === false) {
+            throw new RuntimeException('生成图片数据失败：输出缓冲区获取数据失败');
+        }
+
+        if ($toBase64) {
+            return 'data:image/' . $format . ';base64,' . base64_encode($data);
+        }
+
+        return $data;
+    }
+
+    /**
+     * 获取图片数据（向后兼容）
      *
      * @return string 图片二进制数据
      */
     private function getImageData(): string
     {
-        $format = $this->getOutputFormat();
-        $quality = $format === 'webp'
-            ? (int) ($this->config['webp_quality'] ?? 40)
-            : (int) ($this->config['png_quality'] ?? 7);
+        if ($this->im === null) {
+            throw new RuntimeException('图片资源不存在');
+        }
 
-        ob_start();
-        $func = 'image' . $format;
-        $func($this->im, null, $quality);
-        $data = ob_get_clean();
-
-        return $data ?: '';
+        return $this->outputImageToBuffer($this->im);
     }
 
     /**
@@ -1010,21 +1205,7 @@ class Captcha
             $this->createBg();
             $this->merge();
 
-            $format = $this->getOutputFormat();
-            $quality = $format === 'webp'
-                ? (int) ($this->config['webp_quality'] ?? 40)
-                : (int) ($this->config['png_quality'] ?? 7);
-
-            ob_start();
-            $func = 'image' . $format;
-            $func($this->im, null, $quality);
-            $data = ob_get_clean();
-
-            if ($data === false) {
-                throw new RuntimeException('生成图片数据失败');
-            }
-
-            return $data;
+            return $this->outputImageToBuffer($this->im);
         } finally {
             $this->destroy();
         }
@@ -1066,9 +1247,10 @@ class Captcha
             ];
         }
 
-        // 安全校验：检查验证码是否过期（超过10分钟视为过期）
+        // 安全校验：检查验证码是否过期
+        $captchaExpire = $this->filterInt($this->config['captcha_expire'] ?? self::DEFAULT_CAPTCHA_EXPIRE, 60, 3600);
         $createdAt = $this->getSessionValue($this->sessionKeyCreatedAt, 0);
-        if ($createdAt > 0 && (time() - $createdAt) > 600) {
+        if ($createdAt > 0 && (time() - $createdAt) > $captchaExpire) {
             $this->refresh();
             return [
                 'success' => false,
@@ -1153,9 +1335,9 @@ class Captcha
             }
 
             $actual = $clickPoints[$index];
-            $distance = sqrt(
-                pow($actual['x'] - $expected['x'], 2) +
-                pow($actual['y'] - $expected['y'], 2)
+            $distance = hypot(
+                (float) ($actual['x'] - $expected['x']),
+                (float) ($actual['y'] - $expected['y'])
             );
 
             if ($distance > $this->clickFaultTolerance) {
@@ -1511,8 +1693,8 @@ class Captcha
         $maxX = $this->bgWidth - $this->markWidth - 1;
         $maxY = $this->bgHeight - $this->markHeight - 1;
 
-        $this->posX = mt_rand($minX, $maxX);
-        $this->posY = mt_rand(0, max(0, $maxY));
+        $this->posX = $this->secureRandomInt($minX, max($minX, $maxX));
+        $this->posY = $this->secureRandomInt(0, max(0, $maxY));
 
         $this->setSessionValue($this->sessionKeyR, $this->posX);
         $this->setSessionValue($this->sessionKeyErr, 0);
@@ -1545,7 +1727,7 @@ class Captcha
                     : null,
                 default => null,
             };
-        } catch (\Throwable $e) {
+        } catch (\Throwable) {
             return null;
         }
     }
@@ -1650,14 +1832,15 @@ class Captcha
 
         $format = $this->getOutputFormat();
         $quality = $format === 'webp'
-            ? (int) ($this->config['webp_quality'] ?? 40)
-            : (int) ($this->config['png_quality'] ?? 7);
+            ? $this->filterInt($this->config['webp_quality'] ?? self::DEFAULT_WEBP_QUALITY, 0, 100)
+            : $this->filterInt($this->config['png_quality'] ?? self::DEFAULT_PNG_QUALITY, 0, 9);
 
         if (!headers_sent()) {
             header('Content-Type: image/' . $format);
             header('Cache-Control: no-cache, no-store, must-revalidate');
             header('Pragma: no-cache');
             header('Expires: 0');
+            header('X-Content-Type-Options: nosniff');
         }
 
         $func = 'image' . $format;
@@ -1665,38 +1848,63 @@ class Captcha
     }
 
     /**
-     * 销毁图片资源
+     * 安全销毁图片资源
+     *
+     * PHP 8.0+ 中 GdImage 会自动垃圾回收，但为确保内存立即释放，
+     * 在支持的 PHP 版本中仍调用 imagedestroy
      */
     private function destroy(): void
     {
-        if ($this->im !== null) {
-            imagedestroy($this->im);
-            $this->im = null;
-        }
-        if ($this->imFullBg !== null) {
-            imagedestroy($this->imFullBg);
-            $this->imFullBg = null;
-        }
-        if ($this->imBg !== null) {
-            imagedestroy($this->imBg);
-            $this->imBg = null;
-        }
-        if ($this->imSlide !== null) {
-            imagedestroy($this->imSlide);
-            $this->imSlide = null;
+        $this->destroyImage($this->im);
+        $this->destroyImage($this->imFullBg);
+        $this->destroyImage($this->imBg);
+        $this->destroyImage($this->imSlide);
+    }
+
+    /**
+     * 销毁单个图片资源
+     *
+     * @param GdImage|null $image 图片资源
+     */
+    private function destroyImage(?GdImage &$image): void
+    {
+        if ($image !== null) {
+            // PHP 8.0+ imagedestroy 已弃用，但为保证兼容性仍调用
+            if (PHP_VERSION_ID < 80000) {
+                imagedestroy($image);
+            }
+            $image = null;
         }
     }
 
     /**
      * 获取配置项
      *
-     * @param string $key     配置键名
+     * 支持点号分隔访问嵌套配置，例如：
+     * - 'click.char_count' 访问点击验证码的字符数量
+     * - 'slide.track_verify' 访问滑动验证码的轨迹验证配置
+     *
+     * @param string $key     配置键名，支持点号分隔
      * @param mixed  $default 默认值
      *
      * @return mixed 配置值
      */
     public function getConfig(string $key, mixed $default = null): mixed
     {
+        // 支持点号分隔访问嵌套配置
+        if (str_contains($key, '.')) {
+            $parts = explode('.', $key);
+            $value = $this->config;
+            foreach ($parts as $part) {
+                if (is_array($value) && array_key_exists($part, $value)) {
+                    $value = $value[$part];
+                } else {
+                    return $default;
+                }
+            }
+            return $value;
+        }
+
         return $this->config[$key] ?? $default;
     }
 

@@ -119,12 +119,14 @@ class Adapter
 
         try {
             $captcha = new Captcha($this->config);
-            $result = $captcha->check();
+            $offset = $_POST['captcha_r'] ?? $_GET['captcha_r'] ?? null;
+            $token = $_POST['xf_captcha_token'] ?? $_GET['xf_captcha_token'] ?? null;
+            $result = $captcha->verify($offset, $token);
 
             echo json_encode([
-                'success' => $result,
-                'message' => $result ? '验证成功' : '验证失败，请重试',
-                'code' => $result ? 200 : 400,
+                'success' => $result['success'],
+                'message' => $result['message'],
+                'code' => $result['success'] ? 200 : 400,
             ]);
         } catch (\Throwable $e) {
             http_response_code(500);
