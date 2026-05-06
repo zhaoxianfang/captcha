@@ -266,7 +266,6 @@ class CaptchaService extends Service
             };
 
             $validate->extend('xfCaptcha', $extend, '滑动验证码验证失败');
-            $validate->extend('xfcaptcha', $extend, '滑动验证码验证失败');
         });
     }
 }

@@ -135,7 +135,6 @@ class CaptchaServiceProvider extends ServiceProvider
         };
 
         Validator::extend('xfCaptcha', $extend, '验证码验证失败');
-        Validator::extend('xfcaptcha', $extend, '验证码验证失败');
     }
 
     /**
