@@ -435,7 +435,7 @@ class Captcha
     /**
      * 生成请求指纹
      *
-     * 使用多种请求特征生成唯一指纹，用于防止会话劫持和验证请求来源一致性
+     * 使用稳定的请求特征生成唯一指纹，用于防止会话劫持和验证请求来源一致性
      */
     private function generateFingerprint(): string
     {
@@ -443,13 +443,7 @@ class Captcha
             $_SERVER['HTTP_USER_AGENT'] ?? 'unknown',
             $_SERVER['REMOTE_ADDR'] ?? ($_SERVER['HTTP_X_FORWARDED_FOR'] ?? '0.0.0.0'),
             $_SERVER['HTTP_ACCEPT_LANGUAGE'] ?? 'unknown',
-            $_SERVER['HTTP_ACCEPT_ENCODING'] ?? 'unknown',
-            $_SERVER['HTTP_ACCEPT'] ?? 'unknown',
         ];
-
-        // 添加时间窗口（每10分钟变化一次，允许同一设备在一定时间内保持验证）
-        $timeWindow = (int) (time() / 600);
-        $features[] = (string) $timeWindow;
 
         return hash('sha256', implode('|', $features));
     }
