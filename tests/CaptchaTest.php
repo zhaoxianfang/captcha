@@ -322,4 +322,189 @@ class CaptchaTest extends TestCase
         $resultBot = $captcha->verify(0, null, [], $botTrack);
         $this->assertFalse($resultBot['success']);
     }
+
+    /**
+     * 读取 CLI mock session 中的私有数据（仅测试用）
+     */
+    private function getMockSession(Captcha $captcha): array
+    {
+        $ref = new \ReflectionClass($captcha);
+        $prop = $ref->getProperty('mockSession');
+        if (PHP_VERSION_ID < 80500) {
+            $prop->setAccessible(true);
+        }
+        return $prop->getValue($captcha);
+    }
+
+    /**
+     * 测试滑动验证码：正确偏移量通过，错误偏移量失败
+     */
+    public function testSlideVerifyOffset(): void
+    {
+        $captcha = new Captcha([
+            'captcha_type' => Captcha::TYPE_SLIDE,
+            'verify_mode' => Captcha::VERIFY_BACKEND_ONLY,
+            'slide' => ['track_verify' => false],
+        ]);
+
+        try {
+            $captcha->makeData();
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('背景图片', $e->getMessage());
+            return;
+        }
+
+        $session = $this->getMockSession($captcha);
+        $posX = (int) ($session['xf_captcha_r'] ?? null);
+        $this->assertNotNull($posX, 'session 中应存储正确的缺口位置');
+
+        // 正确位置（容错范围内）应验证通过
+        $ok = $captcha->verify($posX);
+        $this->assertTrue($ok['success'], '正确偏移量应验证通过: ' . ($ok['message'] ?? ''));
+
+        // 偏移过大应验证失败
+        $bad = $captcha->verify($posX + 50);
+        $this->assertFalse($bad['success'], '明显错误的偏移量应验证失败');
+    }
+
+    /**
+     * 测试点击验证码：按序点击正确位置通过，错误位置失败
+     */
+    public function testClickVerifyPoints(): void
+    {
+        $captcha = new Captcha([
+            'captcha_type' => Captcha::TYPE_CLICK,
+            'verify_mode' => Captcha::VERIFY_BACKEND_ONLY,
+            'click' => ['char_count' => 3, 'fault_tolerance' => 25],
+        ]);
+
+        try {
+            $captcha->makeData();
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('背景图片', $e->getMessage());
+            return;
+        }
+
+        $session = $this->getMockSession($captcha);
+        $stored = $session['xf_captcha_click_data'] ?? [];
+        $this->assertCount(3, $stored, '应生成 3 个点击位置');
+
+        // 完全正确的点位（按序）
+        $points = array_map(fn($c) => ['x' => $c['x'], 'y' => $c['y']], $stored);
+        $ok = $captcha->verify(null, null, $points);
+        $this->assertTrue($ok['success'], '正确的点击位置应验证通过: ' . ($ok['message'] ?? ''));
+
+        // 把所有点位整体偏移 60px（远超容错）应失败
+        $wrong = array_map(fn($c) => ['x' => $c['x'] + 60, 'y' => $c['y'] + 60], $stored);
+        $bad = $captcha->verify(null, null, $wrong);
+        $this->assertFalse($bad['success'], '明显错误的点击位置应验证失败');
+
+        // 点位数量不足应失败
+        $partial = array_slice($points, 0, 2);
+        $badCount = $captcha->verify(null, null, $partial);
+        $this->assertFalse($badCount['success'], '点击数量不足应失败');
+    }
+
+    /**
+     * 测试双重验证模式：首次验证返回 token，二次验证消费 token
+     */
+    public function testDualVerifyTokenFlow(): void
+    {
+        $captcha = new Captcha([
+            'captcha_type' => Captcha::TYPE_SLIDE,
+            'verify_mode' => Captcha::VERIFY_DUAL,
+            'slide' => ['track_verify' => false],
+        ]);
+
+        try {
+            $captcha->makeData();
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('背景图片', $e->getMessage());
+            return;
+        }
+
+        $session = $this->getMockSession($captcha);
+        $posX = (int) ($session['xf_captcha_r'] ?? null);
+
+        // 首次验证：返回一次性 token
+        $first = $captcha->verify($posX);
+        $this->assertTrue($first['success']);
+        $this->assertNotEmpty($first['token'], '双重验证首次应通过并返回 token');
+
+        // 二次验证：消费 token 成功
+        $second = $captcha->verify(null, $first['token']);
+        $this->assertTrue($second['success'], '二次验证应成功');
+
+        // token 一次性使用，再次使用应失败
+        $reuse = $captcha->verify(null, $first['token']);
+        $this->assertFalse($reuse['success'], '已使用的 token 不应重复通过');
+    }
+
+    /**
+     * 测试点击验证码双重验证 token 流程
+     */
+    public function testClickDualVerifyTokenFlow(): void
+    {
+        $captcha = new Captcha([
+            'captcha_type' => Captcha::TYPE_CLICK,
+            'verify_mode' => Captcha::VERIFY_DUAL,
+            'click' => ['char_count' => 3, 'fault_tolerance' => 25],
+        ]);
+
+        try {
+            $captcha->makeData();
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('背景图片', $e->getMessage());
+            return;
+        }
+
+        $session = $this->getMockSession($captcha);
+        $stored = $session['xf_captcha_click_data'] ?? [];
+        $this->assertCount(3, $stored);
+
+        $points = array_map(fn($c) => ['x' => $c['x'], 'y' => $c['y']], $stored);
+
+        // 首次验证：返回一次性 token
+        $first = $captcha->verify(null, null, $points);
+        $this->assertTrue($first['success'], '点击双重验证首次应通过');
+        $this->assertNotEmpty($first['token'], '点击双重验证首次应通过并返回 token');
+
+        // 二次验证：消费 token 成功
+        $second = $captcha->verify(null, $first['token']);
+        $this->assertTrue($second['success'], '点击二次验证应成功');
+
+        // token 一次性使用，再次使用应失败
+        $reuse = $captcha->verify(null, $first['token']);
+        $this->assertFalse($reuse['success'], '已使用的 token 不应重复通过');
+    }
+
+    /**
+     * 测试验证成功后的重放防护（答案立即作废）
+     */
+    public function testReplayProtectionAfterSuccess(): void
+    {
+        $captcha = new Captcha([
+            'captcha_type' => Captcha::TYPE_SLIDE,
+            'verify_mode' => Captcha::VERIFY_BACKEND_ONLY,
+            'slide' => ['track_verify' => false],
+        ]);
+
+        try {
+            $captcha->makeData();
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('背景图片', $e->getMessage());
+            return;
+        }
+
+        $session = $this->getMockSession($captcha);
+        $posX = (int) ($session['xf_captcha_r'] ?? null);
+
+        // 首次验证通过
+        $first = $captcha->verify($posX);
+        $this->assertTrue($first['success'], '首次验证应通过');
+
+        // 成功后再用同一偏移量重放：答案已作废，应失败
+        $replay = $captcha->verify($posX);
+        $this->assertFalse($replay['success'], '验证成功后同一答案不应被重复使用（重放防护）');
+    }
 }

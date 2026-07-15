@@ -66,14 +66,22 @@ class Adapter
         $path = trim($path, '/');
         $prefix = trim($this->routePrefix, '/');
 
-        // 检查是否是验证码相关请求
+        // 检查是否是验证码相关请求（前缀必须位于路径起始，且其后为边界）
         if (strpos($path, $prefix) !== 0) {
             return;
         }
 
-        $action = substr($path, strlen($prefix) + 1);
+        $rest = substr($path, strlen($prefix));
+        if ($rest !== '' && !str_starts_with($rest, '/')) {
+            return;
+        }
+
+        $action = ltrim($rest, '/');
 
         switch ($action) {
+            case 'data':
+                $this->data();
+                break;
             case 'image':
                 $this->image();
                 break;
@@ -90,6 +98,49 @@ class Adapter
                 $this->icon();
                 break;
         }
+    }
+
+    /**
+     * 获取验证码数据（支持滑动和点击验证码）
+     *
+     * @return void
+     */
+    public function data(): void
+    {
+        header('Content-Type: application/json');
+
+        try {
+            $captcha = new Captcha($this->config);
+            $isRefresh = isset($_GET['refresh']) || isset($_GET['_s']);
+            $result = $captcha->makeData([], $isRefresh);
+
+            $response = [
+                'success' => true,
+                'code' => 200,
+                'type' => $result['type'],
+                'image_base64' => $result['image_base64'],
+                'hint' => $result['hint'],
+                'bg_width' => $result['bg_width'],
+                'bg_height' => $result['bg_height'],
+            ];
+
+            if ($result['type'] === Captcha::TYPE_SLIDE) {
+                $response['mark_width'] = $result['mark_width'];
+                $response['mark_height'] = $result['mark_height'];
+            } else {
+                $response['char_count'] = $result['char_count'];
+            }
+
+            echo json_encode($response, JSON_UNESCAPED_UNICODE);
+        } catch (\Throwable $e) {
+            http_response_code(500);
+            echo json_encode([
+                'success' => false,
+                'message' => '生成验证码失败：' . $e->getMessage(),
+                'code' => 500,
+            ], JSON_UNESCAPED_UNICODE);
+        }
+        exit;
     }
 
     /**
@@ -121,13 +172,24 @@ class Adapter
             $captcha = new Captcha($this->config);
             $offset = $_POST['captcha_r'] ?? $_GET['captcha_r'] ?? null;
             $token = $_POST['xf_captcha_token'] ?? $_GET['xf_captcha_token'] ?? null;
-            $result = $captcha->verify($offset, $token);
+
+            $clickPoints = $_POST['click_points'] ?? $_GET['click_points'] ?? [];
+            if (is_string($clickPoints)) {
+                $clickPoints = json_decode($clickPoints, true) ?: [];
+            }
+            $slideTrack = $_POST['slide_track'] ?? $_GET['slide_track'] ?? [];
+            if (is_string($slideTrack)) {
+                $slideTrack = json_decode($slideTrack, true) ?: [];
+            }
+
+            $result = $captcha->verify($offset, $token, (array) $clickPoints, (array) $slideTrack);
 
             echo json_encode([
                 'success' => $result['success'],
                 'message' => $result['message'],
                 'code' => $result['success'] ? 200 : 400,
-            ]);
+                'token' => $result['token'] ?? null,
+            ], JSON_UNESCAPED_UNICODE);
         } catch (\Throwable $e) {
             http_response_code(500);
             echo json_encode([
@@ -249,7 +311,9 @@ class Adapter
 
         header('Content-Type: image/png');
         imagepng($image);
-        imagedestroy($image);
+        if (PHP_VERSION_ID < 80000) {
+            imagedestroy($image);
+        }
     }
 
     /**

@@ -183,6 +183,13 @@
         _rafId: null,
         _successHideTimer: null,
 
+        // 画布与显示尺寸的缩放比例（用于把 CSS 像素映射回图片像素）
+        _imgScale: 1,    // 每个图片像素对应的 CSS 像素数 (rect.width / canvas.width)
+        _imgInvScale: 1, // 每个 CSS 像素对应的图片像素数 (canvas.width / rect.width)
+
+        // 滑动轨迹数据（用于后端防机器人轨迹验证）
+        _slideTrack: [],
+
         // 尺寸配置
         _markWidth: 50,
         _markHeight: 50,
@@ -265,6 +272,7 @@
             xfCaptcha._blockStartY = evt.clientY;
             xfCaptcha._doing = true;
             xfCaptcha._isMoving = true;
+            xfCaptcha._slideTrack = [];
 
             // 添加拖动状态样式
             const block = document.querySelector(".captcha_slide_block");
@@ -283,10 +291,19 @@
             const evt = e.touches ? e.touches[0] : e;
 
             let offset = evt.clientX - xfCaptcha._blockStartX;
-            const maxOffset = xfCaptcha._imgWidth - xfCaptcha._markWidth;
 
-            // 限制滑动范围
+            // 最大可拖动范围（图片像素）换算到 CSS 像素，保证滑块能拖到缺口位置
+            const maxOffset = (xfCaptcha._imgWidth - xfCaptcha._markWidth) * (xfCaptcha._imgScale || 1);
+
+            // 限制滑动范围（CSS 像素）
             offset = Math.max(0, Math.min(offset, maxOffset));
+
+            // 记录轨迹点（CSS 空间）用于后端防机器人校验
+            xfCaptcha._slideTrack.push({
+                x: Math.round(offset),
+                y: Math.round(evt.clientY - xfCaptcha._blockStartY),
+                t: Date.now(),
+            });
 
             // 如果位置没有变化，不更新
             if (offset === xfCaptcha._markOffset) return;
@@ -303,7 +320,7 @@
                     block.style.transform = "translateX(" + offset + "px)";
                 }
 
-                // 计算比例位置
+                // 记录 CSS 空间偏移量（用于显示），真实图片空间偏移在发送时换算
                 xfCaptcha._markOffset = offset;
                 xfCaptcha._drawMark();
 
@@ -561,6 +578,8 @@
          */
         _sendResult() {
             const ajax = new AjaxRequest();
+            // 把 CSS 空间偏移换算回图片空间偏移，与服务端 posX 口径一致
+            const sendOffset = Math.round(xfCaptcha._markOffset * (xfCaptcha._imgInvScale || 1));
             ajax.request(
                 "POST",
                 xfCaptcha._options.checkUrl,
@@ -568,7 +587,10 @@
                     success: xfCaptcha._sendResultSuccess,
                     failure: xfCaptcha._sendResultFailure,
                 },
-                { captcha_r: xfCaptcha._markOffset }
+                {
+                    captcha_r: sendOffset,
+                    slide_track: JSON.stringify(xfCaptcha._slideTrack || []),
+                }
             );
         },
 
@@ -819,10 +841,11 @@
             const ctx = canvas.getContext("2d");
 
             if (xfCaptcha._captchaType === 'slide') {
+                // 绘制带缺口的背景（合成图第 0 段），让用户一开始就看到缺口位置
                 ctx.drawImage(
                     xfCaptcha._img,
                     0,
-                    xfCaptcha._imgHeight * 2,
+                    0,
                     xfCaptcha._imgWidth,
                     xfCaptcha._imgHeight,
                     0,
@@ -875,9 +898,11 @@
             ctx.clearRect(0, 0, canvas.width, canvas.height);
 
             // 计算实际可绘制的宽度（防止超出画布边界）
-            const availableWidth = canvas.width - xfCaptcha._markOffset;
+            // 将 CSS 空间偏移换算为图片空间偏移，保证滑块与缺口对齐
+            const drawOffset = xfCaptcha._markOffset * (xfCaptcha._imgInvScale || 1);
+            const availableWidth = canvas.width - drawOffset;
             const drawWidth = Math.min(xfCaptcha._markWidth, availableWidth);
-            
+
             if (drawWidth <= 0) return;
 
             // 创建临时画布处理边缘效果
@@ -984,10 +1009,10 @@
                 tempCtx.putImageData(imageData, 0, 0);
                 
                 // 将处理后的图片绘制到主画布
-                ctx.drawImage(tempCanvas, 0, 0, drawWidth, xfCaptcha._imgHeight, xfCaptcha._markOffset, 0, drawWidth, xfCaptcha._imgHeight);
+                ctx.drawImage(tempCanvas, 0, 0, drawWidth, xfCaptcha._imgHeight, drawOffset, 0, drawWidth, xfCaptcha._imgHeight);
             } catch (e) {
                 // 如果图像处理失败，直接绘制原始图片
-                ctx.drawImage(tempCanvas, 0, 0, drawWidth, xfCaptcha._imgHeight, xfCaptcha._markOffset, 0, drawWidth, xfCaptcha._imgHeight);
+                ctx.drawImage(tempCanvas, 0, 0, drawWidth, xfCaptcha._imgHeight, drawOffset, 0, drawWidth, xfCaptcha._imgHeight);
                 console.warn("xfCaptcha: 边缘效果处理失败", e);
             }
         },
@@ -1022,6 +1047,7 @@
             xfCaptcha._markOffset = 0;
             xfCaptcha._doing = false;
             xfCaptcha._isMoving = false;
+            xfCaptcha._slideTrack = [];
             xfCaptcha._clickPoints = [];
             xfCaptcha._clickCount = 0;
 
@@ -1177,6 +1203,7 @@
             xfCaptcha._clickCount = 0;
             xfCaptcha._token = null;
             xfCaptcha._doing = false;
+            xfCaptcha._slideTrack = [];
             xfCaptcha._clearClickMarkers();
 
             const bgCanvas = document.querySelector(".captcha_canvas_bg");
@@ -1239,6 +1266,13 @@
 
                                 xfCaptcha._img = new Image();
                                 xfCaptcha._img.onload = function () {
+                                    // 计算画布显示尺寸与图片逻辑尺寸的缩放比例
+                                    if (bgCanvas && bgCanvas.width > 0) {
+                                        const rect = bgCanvas.getBoundingClientRect();
+                                        const rw = rect.width || bgCanvas.width;
+                                        xfCaptcha._imgScale = rw / bgCanvas.width;
+                                        xfCaptcha._imgInvScale = bgCanvas.width / rw;
+                                    }
                                     xfCaptcha._drawFullBg();
                                     const markCtx = markCanvas.getContext("2d");
                                     markCtx.clearRect(0, 0, markCanvas.width, markCanvas.height);
@@ -1488,6 +1522,7 @@
             xfCaptcha._markOffset = 0;
             xfCaptcha._doing = false;
             xfCaptcha._isMoving = false;
+            xfCaptcha._slideTrack = [];
             xfCaptcha._clickPoints = [];
             xfCaptcha._clickCount = 0;
 

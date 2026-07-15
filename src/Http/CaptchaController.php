@@ -428,7 +428,9 @@ class CaptchaController
             ob_start();
             imagepng($image);
             $imageData = ob_get_clean();
-            imagedestroy($image);
+            if (PHP_VERSION_ID < 80000) {
+                imagedestroy($image);
+            }
 
             return response($imageData, 200, [
                 'Content-Type' => 'image/png',
@@ -445,7 +447,9 @@ class CaptchaController
         }
 
         imagepng($image);
-        imagedestroy($image);
+        if (PHP_VERSION_ID < 80000) {
+            imagedestroy($image);
+        }
         return null;
     }
 }

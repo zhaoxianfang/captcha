@@ -787,6 +787,9 @@ class Captcha
             imagesy($this->imFullBg)
         );
 
+        // 启用 alpha 混合，确保后续半透明文字背景遮罩能正确与背景图融合
+        imagealphablending($this->imBg, true);
+
         // 生成点击位置数据
         $this->generateClickData();
     }
@@ -808,7 +811,7 @@ class Captcha
         try {
             return random_int(0, $count - 1);
         } catch (\Exception) {
-            return (int) floor($count * (microtime(true) - (int) microtime(true))) % $count;
+            return mt_rand(0, $count - 1);
         }
     }
 
@@ -928,7 +931,8 @@ class Captcha
         try {
             return random_int($min, $max);
         } catch (\Exception) {
-            return (int) floor($min + ($max - $min + 1) * (microtime(true) - (int) microtime(true))) % ($max - $min + 1) + $min;
+            // 极端降级：random_int 不可用时退化为 mt_rand（弱随机，仅兜底）
+            return mt_rand($min, $max);
         }
     }
 
@@ -1058,21 +1062,34 @@ class Captcha
             }
 
             if ($hasTtf) {
-                // 计算文字尺寸以绘制背景遮罩
-                //    $bbox = imagettfbbox($fontSize, $rotateAngle, $fontPath, $char);
-                //    if ($bbox !== false && $textBgOverlay) {
-                //        $minX = min($bbox[0], $bbox[2], $bbox[4], $bbox[6]);
-                //        $maxX = max($bbox[0], $bbox[2], $bbox[4], $bbox[6]);
-                //        $minY = min($bbox[1], $bbox[3], $bbox[5], $bbox[7]);
-                //        $maxY = max($bbox[1], $bbox[3], $bbox[5], $bbox[7]);
-                //        $textW = $maxX - $minX;
-                //        $textH = $maxY - $minY;
-                //
-                //        // 绘制半透明圆形背景遮罩增强可读性
-                //        $overlayRadius = max($textW, $textH) * 0.65;
-                //        $overlayColor = imagecolorallocatealpha($this->imBg, 255, 255, 255, 100);
-                //        imagefilledellipse($this->imBg, $x, $y - (int)($fontSize * 0.15), (int)($overlayRadius * 2.2), (int)($overlayRadius * 2.2), $overlayColor);
-                //    }
+                // 统一的文字绘制起点
+                $drawX = (int) ($x - $fontSize * 0.4);
+                $drawY = (int) ($y + $fontSize * 0.35);
+
+                // 计算文字边界框，绘制半透明背景遮罩（底层）增强可读性
+                if ($textBgOverlay) {
+                    $bbox = imagettfbbox($fontSize, $rotateAngle, $fontPath, $char);
+                    if ($bbox !== false) {
+                        $minX = min($bbox[0], $bbox[2], $bbox[4], $bbox[6]);
+                        $maxX = max($bbox[0], $bbox[2], $bbox[4], $bbox[6]);
+                        $minY = min($bbox[1], $bbox[3], $bbox[5], $bbox[7]);
+                        $maxY = max($bbox[1], $bbox[3], $bbox[5], $bbox[7]);
+                        $cx = (int) (($minX + $maxX) / 2 + $drawX);
+                        $cy = (int) (($minY + $maxY) / 2 + $drawY);
+                        $textW = $maxX - $minX;
+                        $textH = $maxY - $minY;
+                        // 半透明白色椭圆，覆盖文字并留出余量
+                        $overlayColor = imagecolorallocatealpha($this->imBg, 255, 255, 255, 95);
+                        imagefilledellipse(
+                            $this->imBg,
+                            $cx,
+                            $cy,
+                            (int) ($textW * 1.4 + 14),
+                            (int) ($textH * 1.4 + 14),
+                            $overlayColor
+                        );
+                    }
+                }
 
                 // 添加白色描边/阴影效果增强可读性
                 if ($textStroke) {
@@ -1084,8 +1101,8 @@ class Captcha
                                 $this->imBg,
                                 $fontSize,
                                 $rotateAngle,
-                                (int) ($x + $dx - $fontSize * 0.4),
-                                (int) ($y + $dy + $fontSize * 0.35),
+                                $drawX + $dx,
+                                $drawY + $dy,
                                 $strokeColor,
                                 $fontPath,
                                 $char
@@ -1098,8 +1115,8 @@ class Captcha
                     $this->imBg,
                     $fontSize,
                     $rotateAngle,
-                    (int) ($x - $fontSize * 0.4),
-                    (int) ($y + $fontSize * 0.35),
+                    $drawX,
+                    $drawY,
                     $color,
                     $fontPath,
                     $char
@@ -1107,7 +1124,7 @@ class Captcha
             } else {
                 // 使用内置字体时绘制背景遮罩
                 if ($textBgOverlay) {
-                    $overlayColor = imagecolorallocatealpha($this->imBg, 255, 255, 255, 100);
+                    $overlayColor = imagecolorallocatealpha($this->imBg, 255, 255, 255, 95);
                     imagefilledellipse($this->imBg, $x + 4, $y - 2, 28, 28, $overlayColor);
                 }
 
@@ -1193,10 +1210,13 @@ class Captcha
         ob_start();
         $func = 'image' . $format;
 
-        match ($format) {
-            'png' => $func($image, null, $quality),
-            default => $func($image, null, $quality),
-        };
+        if ($format === 'png') {
+            // 保留可能存在的透明通道（如缺口/滑块区域）
+            imagealphablending($image, true);
+            imagesavealpha($image, true);
+        }
+
+        $func($image, null, $quality);
 
         $data = ob_get_clean();
 
@@ -1312,9 +1332,17 @@ class Captcha
             ];
         }
 
+        // 仅前端验证模式（不安全，仅测试）：跳过所有安全与位置校验，直接通过
+        $verifyMode = $this->config['verify_mode'] ?? self::VERIFY_DUAL;
+        if ($verifyMode === self::VERIFY_FRONTEND_ONLY) {
+            return $this->verifyFrontendOnly();
+        }
+
         // 安全校验：检查请求指纹是否匹配（防止会话劫持）
+        // 仅首次验证（未携带 token）时校验；二次验证以一次性 token 为强凭证，
+        // 不再受指纹约束，避免移动网络切换 / 代理导致指纹变化而误杀真实用户。
         $storedFingerprint = $this->getSessionValue($this->sessionKeyFingerprint);
-        if ($storedFingerprint !== null && $storedFingerprint !== $this->requestFingerprint) {
+        if ($token === null && $storedFingerprint !== null && $storedFingerprint !== $this->requestFingerprint) {
             $this->refresh();
             return [
                 'success' => false,
@@ -1442,6 +1470,8 @@ class Captcha
         $this->setSessionValue($this->sessionKeyToken, $newToken);
         $this->setSessionValue($this->sessionKeyTokenExpire, time() + $this->tokenExpire);
         $this->setSessionValue($this->sessionKeyCheck, 'pending');
+        // 首次成功后立即作废点击答案，防止重复利用同一张图刷 token
+        $this->deleteSessionValue($this->sessionKeyClickData);
 
         return [
             'success' => true,
@@ -1451,21 +1481,17 @@ class Captcha
     }
 
     /**
-     * 仅前端验证模式（不安全，仅用于测试）
+     * 校验滑动偏移量与轨迹（滑动验证公共逻辑）
+     *
+     * 抽离自 verifyBackendOnly / verifyPrimary，避免重复代码与行为不一致。
+     * 返回 null 表示校验通过；返回数组表示校验失败结果。
+     *
+     * @param string|int|null $offset     用户滑动偏移量
+     * @param array           $slideTrack 滑动轨迹
+     *
+     * @return array|null
      */
-    private function verifyFrontendOnly(): array
-    {
-        return [
-            'success' => true,
-            'token' => 'frontend_only',
-            'message' => '前端验证通过',
-        ];
-    }
-
-    /**
-     * 仅后端验证模式
-     */
-    private function verifyBackendOnly(string|int|null $offset, array $slideTrack = []): array
+    private function validateSlideOffset(string|int|null $offset, array $slideTrack): ?array
     {
         if (!$this->hasSessionValue($this->sessionKeyR)) {
             return [
@@ -1492,9 +1518,7 @@ class Captcha
         $correctPos = (float) $this->getSessionValue($this->sessionKeyR);
 
         $diff = abs($correctPos - $offset);
-        $isValid = $diff <= $this->faultTolerance;
-
-        if (!$isValid) {
+        if ($diff > $this->faultTolerance) {
             $this->handleFailedCheck();
             return [
                 'success' => false,
@@ -1510,6 +1534,31 @@ class Captcha
                 $this->handleFailedCheck();
                 return $trackResult;
             }
+        }
+
+        return null;
+    }
+
+    /**
+     * 仅前端验证模式（不安全，仅用于测试）
+     */
+    private function verifyFrontendOnly(): array
+    {
+        return [
+            'success' => true,
+            'token' => 'frontend_only',
+            'message' => '前端验证通过',
+        ];
+    }
+
+    /**
+     * 仅后端验证模式
+     */
+    private function verifyBackendOnly(string|int|null $offset, array $slideTrack = []): array
+    {
+        $check = $this->validateSlideOffset($offset, $slideTrack);
+        if ($check !== null) {
+            return $check;
         }
 
         $this->handleSuccessfulCheck();
@@ -1539,61 +1588,9 @@ class Captcha
      */
     private function verifyPrimary(string|int|null $offset, array $slideTrack = []): array
     {
-        if (!$this->hasSessionValue($this->sessionKeyR)) {
-            return [
-                'success' => false,
-                'token' => null,
-                'message' => '验证码已过期，请刷新重试',
-            ];
-        }
-
-        if ($offset === '' || $offset === null) {
-            $offset = $_REQUEST['captcha_r'] ?? $_REQUEST['xf_captcha'] ?? '';
-        }
-
-        if (!is_numeric($offset)) {
-            $this->handleFailedCheck();
-            return [
-                'success' => false,
-                'token' => null,
-                'message' => '无效的偏移量',
-            ];
-        }
-
-        $offset = (float) $offset;
-        $correctPos = (float) $this->getSessionValue($this->sessionKeyR);
-
-        $diff = abs($correctPos - $offset);
-        $isValid = $diff <= $this->faultTolerance;
-
-        if (!$isValid) {
-            $this->handleFailedCheck();
-            return [
-                'success' => false,
-                'token' => null,
-                'message' => '验证失败，请重试',
-            ];
-        }
-
-        // 轨迹验证（如果启用且提供了轨迹数据）
-        if (!empty($slideTrack)) {
-            $trackResult = $this->verifySlideTrack($slideTrack);
-            if (!$trackResult['success']) {
-                $this->handleFailedCheck();
-                return $trackResult;
-            }
-        }
-
-        // 根据验证模式处理
-        $verifyMode = $this->config['verify_mode'] ?? self::VERIFY_DUAL;
-
-        if ($verifyMode === self::VERIFY_BACKEND_ONLY) {
-            $this->handleSuccessfulCheck();
-            return [
-                'success' => true,
-                'token' => null,
-                'message' => '验证成功',
-            ];
+        $check = $this->validateSlideOffset($offset, $slideTrack);
+        if ($check !== null) {
+            return $check;
         }
 
         // 双重验证模式：生成一次性令牌
@@ -1601,6 +1598,8 @@ class Captcha
         $this->setSessionValue($this->sessionKeyToken, $token);
         $this->setSessionValue($this->sessionKeyTokenExpire, time() + $this->tokenExpire);
         $this->setSessionValue($this->sessionKeyCheck, 'pending');
+        // 首次成功后立即作废缺口位置，防止重复利用同一张图刷 token
+        $this->deleteSessionValue($this->sessionKeyR);
 
         return [
             'success' => true,
@@ -1688,8 +1687,12 @@ class Captcha
      */
     private function handleSuccessfulCheck(): void
     {
+        // 验证成功后彻底消费本次验证码数据，防止重放
         $this->deleteSessionValue($this->sessionKeyR);
         $this->deleteSessionValue($this->sessionKeyErr);
+        $this->deleteSessionValue($this->sessionKeyClickData);
+        $this->deleteSessionValue($this->sessionKeyFingerprint);
+        $this->deleteSessionValue($this->sessionKeyCreatedAt);
     }
 
     /**
@@ -1761,9 +1764,11 @@ class Captcha
 
         $strictness = $slideConfig['track_strictness'] ?? 'normal';
 
-        // 基本校验：轨迹不能为空且至少要有几个点
+        // 基本校验：轨迹数据格式
+        // 注意：未提供轨迹或轨迹点过少时，直接跳过轨迹校验（通过），
+        // 避免误杀操作过快/采样较少的真实用户；同时与“未发送轨迹即跳过”的行为保持一致。
         if (count($track) < 3) {
-            return ['success' => false, 'message' => '轨迹数据异常，请重试'];
+            return ['success' => true, 'message' => '轨迹数据不足，已跳过轨迹校验'];
         }
 
         // 提取有效数据
@@ -1779,7 +1784,7 @@ class Captcha
         }
 
         if (count($points) < 3) {
-            return ['success' => false, 'message' => '轨迹数据格式错误'];
+            return ['success' => true, 'message' => '轨迹数据格式不完整，已跳过轨迹校验'];
         }
 
         // 计算轨迹特征
@@ -1808,24 +1813,25 @@ class Captcha
         }
 
         // 根据严格程度设置阈值
+        // 说明：阈值整体偏宽松，目的是在不误杀真实用户的前提下拦截明显的机器轨迹。
         $thresholds = match ($strictness) {
             'strict' => [
                 'min_time' => 500,      // 最少耗时 500ms
-                'max_speed' => 5,       // 最大速度 5px/ms
-                'min_points' => 10,     // 最少轨迹点数
-                'max_straight' => 0.95, // 直线度最大 95%
+                'max_speed' => 8,       // 最大速度 8px/ms
+                'min_points' => 8,      // 最少轨迹点数
+                'max_straight' => 0.96, // 直线度最大 96%
             ],
             'loose' => [
-                'min_time' => 200,
-                'max_speed' => 15,
+                'min_time' => 150,
+                'max_speed' => 20,
                 'min_points' => 3,
-                'max_straight' => 0.99,
+                'max_straight' => 0.995,
             ],
             default => [ // normal
-                'min_time' => 300,
-                'max_speed' => 10,
-                'min_points' => 5,
-                'max_straight' => 0.97,
+                'min_time' => 200,
+                'max_speed' => 12,
+                'min_points' => 4,
+                'max_straight' => 0.98,
             ],
         };
 
@@ -1834,9 +1840,9 @@ class Captcha
             return ['success' => false, 'message' => '操作过快，请重试'];
         }
 
-        // 检查轨迹点数
+        // 轨迹点数不足时，样本太少不足以判断，直接跳过（通过）而非误判
         if (count($points) < $thresholds['min_points']) {
-            return ['success' => false, 'message' => '轨迹不完整，请重试'];
+            return ['success' => true, 'message' => '轨迹样本不足，已跳过轨迹校验'];
         }
 
         // 检查最大速度（防止瞬间跳跃）
@@ -1860,10 +1866,11 @@ class Captcha
         }
 
         // 检查速度变化（人类有加减速过程）
-        if (count($speeds) >= 3) {
+        // 仅当轨迹点足够多时再做匀速检测，避免短轨迹误判
+        if (count($speeds) >= 5) {
             $speedVariance = $this->calculateVariance($speeds);
-            // 如果速度几乎不变，可能是机器人匀速滑动
-            if ($speedVariance < 0.01) {
+            // 速度几乎完全不变，可能是机器人匀速滑动
+            if ($speedVariance < 0.002) {
                 return ['success' => false, 'message' => '滑动轨迹异常，请重试'];
             }
         }
@@ -2045,7 +2052,7 @@ class Captcha
 
         imagecolortransparent($this->imSlide, 0);
 
-        imagedestroy($imgMark);
+        $this->destroyImage($imgMark);
     }
 
     /**
@@ -2070,7 +2077,7 @@ class Captcha
 
         imagecopy($this->imBg, $im, $this->posX, $this->posY, 0, 0, $this->markWidth, $this->markHeight);
 
-        imagedestroy($im);
+        $this->destroyImage($im);
     }
 
     /**
@@ -2097,8 +2104,6 @@ class Captcha
         );
 
         imagecopy($this->im, $this->imFullBg, 0, $this->bgHeight * 2, 0, 0, $this->bgWidth, $this->bgHeight);
-
-        imagecolortransparent($this->im, 0);
     }
 
     /**
