@@ -273,6 +273,8 @@
             xfCaptcha._doing = true;
             xfCaptcha._isMoving = true;
             xfCaptcha._slideTrack = [];
+            // 记录起始时刻用于轨迹时间戳（首点 t=0 基准）
+            xfCaptcha._trackStartTime = Date.now();
 
             // 添加拖动状态样式
             const block = document.querySelector(".captcha_slide_block");
@@ -298,11 +300,20 @@
             // 限制滑动范围（CSS 像素）
             offset = Math.max(0, Math.min(offset, maxOffset));
 
-            // 记录轨迹点（CSS 空间）用于后端防机器人校验
+            // 记录轨迹点（换算为图片像素空间，与后端 posX/posY 同一坐标系）
+            // 后端校验默认轨迹为图片像素尺度，CSS 像素会导致速度/直线度阈值被放大而误判
+            const scale = xfCaptcha._imgScale || 1;
+            const invScale = scale > 0 ? 1 / scale : 1;
             xfCaptcha._slideTrack.push({
-                x: Math.round(offset),
-                y: Math.round(evt.clientY - xfCaptcha._blockStartY),
-                t: Date.now(),
+                // 水平：CSS 偏移 -> 图片像素
+                x: Math.round(offset * invScale),
+                // 垂直：以滑块初始图片纵坐标(_markTopY)为基准的绝对图片像素，
+                // 避免相对位移语义与后端不一致
+                y: Math.round(
+                    (xfCaptcha._markTopY || 0) +
+                    (evt.clientY - xfCaptcha._blockStartY) * invScale
+                ),
+                t: Date.now() - (xfCaptcha._trackStartTime || 0),
             });
 
             // 如果位置没有变化，不更新
@@ -1246,6 +1257,9 @@
                                 if (data.type === 'slide') {
                                     xfCaptcha._markWidth = data.mark_width || 50;
                                     xfCaptcha._markHeight = data.mark_height || 50;
+                                    // 记录缺口初始位置（图片像素），用于轨迹纵坐标基准
+                                    xfCaptcha._markTopY = typeof data.pos_y === 'number' ? data.pos_y : 0;
+                                    xfCaptcha._posX = typeof data.pos_x === 'number' ? data.pos_x : 0;
                                 }
 
                                 // 更新 UI 前先清理

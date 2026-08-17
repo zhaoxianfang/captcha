@@ -337,6 +337,96 @@ class CaptchaTest extends TestCase
     }
 
     /**
+     * 通过反射调用私有方法 verifySlideTrack（仅测试用）
+     */
+    private function callVerifySlideTrack(Captcha $captcha, array $track): array
+    {
+        $ref = new \ReflectionClass($captcha);
+        $method = $ref->getMethod('verifySlideTrack');
+        if (PHP_VERSION_ID < 80500) {
+            $method->setAccessible(true);
+        }
+        return $method->invoke($captcha, $track);
+    }
+
+    /**
+     * 生成一条“人类风格”的滑动轨迹（图片像素空间）。
+     *
+     * @param float $scale 坐标放大倍数（>1 表示以 CSS 像素上报）
+     */
+    private function buildHumanTrack(float $scale = 1.0): array
+    {
+        $track = [];
+        $startY = 50;
+        $steps = 16;
+        $totalX = 140 * $scale; // 起点约 50，终点约 190（图片像素）
+        for ($i = 0; $i < $steps; $i++) {
+            $p = $i / ($steps - 1);
+            // 加减速曲线 + 轻微纵向抖动，模拟人类
+            $x = (50 * $scale) + $totalX * (1 - (1 - $p) * (1 - $p)); // 缓出曲线
+            $y = ($startY * $scale) + sin($p * M_PI) * 6 * $scale + random_int(-2, 2) * $scale;
+            $track[] = [
+                'x' => (int) round($x),
+                'y' => (int) round($y),
+                't' => (int) ($i * 75), // 总耗时 ~1.1s
+            ];
+        }
+        return $track;
+    }
+
+    /**
+     * 回归测试：修复“滑动验证码轨迹异常”问题。
+     *
+     * 核心 Bug：前端以 CSS 像素上报轨迹 x，后端按图片像素校验，
+     * 显示尺寸放大后速度/直线度阈值被突破，导致真实用户被误判为“轨迹异常”。
+     */
+    public function testSlideTrackScaleNormalization(): void
+    {
+        $captcha = new Captcha([
+            'captcha_type' => Captcha::TYPE_SLIDE,
+            'slide'        => ['track_verify' => true, 'track_strictness' => 'normal'],
+        ]);
+
+        // 1) 图片像素口径的人类轨迹应通过
+        $imgTrack = $this->buildHumanTrack(1.0);
+        $r1 = $this->callVerifySlideTrack($captcha, $imgTrack);
+        $this->assertTrue($r1['success'], '图片像素口径的人类轨迹应验证通过: ' . ($r1['message'] ?? ''));
+
+        // 2) CSS 像素口径（放大 1.5 倍）的人类轨迹，修复后应被尺度归一通过
+        //    这正是此前报错“轨迹异常，请重试”的真实复现场景
+        $cssTrack = $this->buildHumanTrack(1.5);
+        $r2 = $this->callVerifySlideTrack($captcha, $cssTrack);
+        $this->assertTrue($r2['success'], 'CSS 像素口径(放大1.5x)的人类轨迹应被正确归一并通过: ' . ($r2['message'] ?? ''));
+
+        // 3) 放大 1.375 倍（典型显示宽 330 / 图片宽 240）也应通过
+        $cssTrack2 = $this->buildHumanTrack(330 / 240);
+        $r3 = $this->callVerifySlideTrack($captcha, $cssTrack2);
+        $this->assertTrue($r3['success'], 'CSS 像素口径(330/240)的人类轨迹应被归一并通过: ' . ($r3['message'] ?? ''));
+    }
+
+    /**
+     * 回归测试：机器人式瞬间直线轨迹仍应被拦截。
+     */
+    public function testSlideTrackRejectsBot(): void
+    {
+        $captcha = new Captcha([
+            'captcha_type' => Captcha::TYPE_SLIDE,
+            'slide'        => ['track_verify' => true, 'track_strictness' => 'normal'],
+        ]);
+
+        $baseTime = 1000;
+        // 50ms 内直线滑动 140px，无抖动、无加减速 → 机器人特征
+        $botTrack = [
+            ['x' => 50, 'y' => 50, 't' => $baseTime],
+            ['x' => 100, 'y' => 50, 't' => $baseTime + 25],
+            ['x' => 190, 'y' => 50, 't' => $baseTime + 50],
+        ];
+
+        $result = $this->callVerifySlideTrack($captcha, $botTrack);
+        $this->assertFalse($result['success'], '机器人瞬间直线轨迹应被拦截（操作过快/速度异常）');
+    }
+
+    /**
      * 测试滑动验证码：正确偏移量通过，错误偏移量失败
      */
     public function testSlideVerifyOffset(): void

@@ -68,7 +68,6 @@ class Captcha
     /** 验证码默认过期时间（秒） */
     private const DEFAULT_CAPTCHA_EXPIRE = 600;
 
-    /** 最小滑块宽度 */
     /** 默认最小滑块宽度 */
     private const DEFAULT_MIN_MARK_WIDTH = 30;
 
@@ -87,9 +86,15 @@ class Captcha
     private ?GdImage $imFullBg = null;
 
     /**
-     * 裁剪后的背景图片资源
+     * 裁剪后的背景图片资源（已缩放到 bgWidth x bgHeight，带缺口）
      */
     private ?GdImage $imBg = null;
+
+    /**
+     * 缩放后的完整背景图片资源（已缩放到 bgWidth x bgHeight，无缺口）
+     * 用于生成滑块内容与拼图底图，与 imBg 坐标系一致。
+     */
+    private ?GdImage $imScaledBg = null;
 
     /**
      * 滑块图片资源
@@ -225,11 +230,6 @@ class Captcha
      * Session 键名 - 存储速率限制时间窗口
      */
     private string $sessionKeyRateLimitTime = 'captcha_rate_limit_time';
-
-    /**
-     * Session 键名 - 存储滑动轨迹数据
-     */
-    private string $sessionKeySlideTrack = 'captcha_slide_track';
 
     /**
      * 是否使用模拟Session（CLI模式）
@@ -420,7 +420,6 @@ class Captcha
         $this->sessionKeyCreatedAt = $prefix . '_created_at';
         $this->sessionKeyRateLimit = $prefix . '_rate_limit';
         $this->sessionKeyRateLimitTime = $prefix . '_rate_limit_time';
-        $this->sessionKeySlideTrack = $prefix . '_slide_track';
 
         // 生成请求指纹用于安全校验
         $this->requestFingerprint = $this->generateFingerprint();
@@ -663,6 +662,17 @@ class Captcha
      */
     public function makeData(array $bgImages = [], bool $refresh = false): array
     {
+        // 刷新（生成新验证码）同样计入限流，避免攻击者无限刷新绕过 verify 的速率限制
+        if (!$this->checkRateLimit()) {
+            return [
+                'success' => false,
+                'type' => null,
+                'image' => '',
+                'image_base64' => '',
+                'message' => '请求过于频繁，请稍后再试',
+            ];
+        }
+
         // 确定验证码类型（刷新时强制切换）
         $this->captchaType = $this->getCaptchaType($refresh);
         $this->setSessionValue($this->sessionKeyType, $this->captchaType);
@@ -1236,15 +1246,6 @@ class Captcha
      *
      * @return string 图片二进制数据
      */
-    private function getImageData(): string
-    {
-        if ($this->im === null) {
-            throw new RuntimeException('图片资源不存在');
-        }
-
-        return $this->outputImageToBuffer($this->im);
-    }
-
     /**
      * 生成验证码图片
      *
@@ -1381,9 +1382,9 @@ class Captcha
         }
 
         // 滑动验证码验证
-        $verifyMode = $this->config['verify_mode'] ?? self::VERIFY_DUAL;
+        $slideVerifyMode = $this->config['verify_mode'] ?? self::VERIFY_DUAL;
 
-        return match ($verifyMode) {
+        return match ($slideVerifyMode) {
             self::VERIFY_FRONTEND_ONLY => $this->verifyFrontendOnly(),
             self::VERIFY_BACKEND_ONLY => $this->verifyBackendOnly($offset, $slideTrack),
             self::VERIFY_DUAL => $this->verifyDual($offset, $token, $slideTrack),
@@ -1776,8 +1777,8 @@ class Captcha
         foreach ($track as $point) {
             if (isset($point['x'], $point['y'], $point['t'])) {
                 $points[] = [
-                    'x' => (int) $point['x'],
-                    'y' => (int) $point['y'],
+                    'x' => (float) $point['x'],
+                    'y' => (float) $point['y'],
                     't' => (int) $point['t'],
                 ];
             }
@@ -1785,6 +1786,27 @@ class Captcha
 
         if (count($points) < 3) {
             return ['success' => true, 'message' => '轨迹数据格式不完整，已跳过轨迹校验'];
+        }
+
+        // 尺度自适应归一：
+        // 前端理论上已把坐标换算成图片像素空间（与 posX/posY 同一口径），
+        // 但浏览器缩放/DPR/显示尺寸差异可能导致坐标仍以 CSS 像素或放大尺度上报。
+        // 当轨迹 x 范围明显超出图片像素空间时，按“图片宽 / 实际水平跨度”自动归一到图片像素，
+        // 避免速度/直线度阈值被放大尺度错误触发。
+        $xs = array_column($points, 'x');
+        $minX = min($xs);
+        $maxX = max($xs);
+        $forwardX = $maxX - $minX;
+        if ($forwardX > 1 && $maxX > $this->bgWidth) {
+            $normScale = $this->bgWidth / $maxX;
+            foreach ($points as &$p) {
+                $p['x'] = $p['x'] * $normScale;
+                $p['y'] = $p['y'] * $normScale;
+            }
+            unset($p);
+            $minX *= $normScale;
+            $maxX *= $normScale;
+            $forwardX = $maxX - $minX;
         }
 
         // 计算轨迹特征
@@ -1846,9 +1868,14 @@ class Captcha
         }
 
         // 检查最大速度（防止瞬间跳跃）
+        // 采用“相对尺度”判定：最大瞬时速度相对整体平均速度的倍数，
+        // 避免绝对 px/ms 阈值受轻微显示缩放影响而误判真实用户。
         if (!empty($speeds)) {
             $maxSpeed = max($speeds);
-            if ($maxSpeed > $thresholds['max_speed']) {
+            $avgSpeed = $totalDistance / max(1, $totalTime);
+            $speedRatio = $avgSpeed > 0 ? $maxSpeed / $avgSpeed : 0;
+            // 绝对速度阈值（兜底缩放误差）或相对峰值倍数（>6 倍均值视为异常跳跃）
+            if ($maxSpeed > $thresholds['max_speed'] && $speedRatio > 6) {
                 return ['success' => false, 'message' => '滑动速度异常，请重试'];
             }
         }
@@ -1870,7 +1897,10 @@ class Captcha
         if (count($speeds) >= 5) {
             $speedVariance = $this->calculateVariance($speeds);
             // 速度几乎完全不变，可能是机器人匀速滑动
-            if ($speedVariance < 0.002) {
+            // 改用相对方差（方差 / 均值^2），对尺度无关，避免缩放导致误判
+            $avgSpeed = $totalDistance / max(1, $totalTime);
+            $relVariance = $avgSpeed > 0 ? $speedVariance / ($avgSpeed * $avgSpeed) : 0;
+            if ($relVariance < 0.01) {
                 return ['success' => false, 'message' => '滑动轨迹异常，请重试'];
             }
         }
@@ -1969,7 +1999,28 @@ class Captcha
             throw new RuntimeException('创建背景画布失败');
         }
 
-        imagecopy($this->imBg, $this->imFullBg, 0, 0, 0, 0, $this->bgWidth, $this->bgHeight);
+        // 缩放后的完整背景（无缺口），坐标系与 imBg / posX / posY 完全一致，
+        // 供 createSlide 取滑块内容、merge 取拼图底图使用。
+        $this->imScaledBg = imagecreatetruecolor($this->bgWidth, $this->bgHeight);
+        if ($this->imScaledBg === false) {
+            throw new RuntimeException('创建缩放背景画布失败');
+        }
+
+        imagecopyresampled(
+            $this->imScaledBg,
+            $this->imFullBg,
+            0,
+            0,
+            0,
+            0,
+            $this->bgWidth,
+            $this->bgHeight,
+            imagesx($this->imFullBg),
+            imagesy($this->imFullBg)
+        );
+
+        // imBg 复制缩放后的背景（带缺口将在 createBg 中挖出）
+        imagecopy($this->imBg, $this->imScaledBg, 0, 0, 0, 0, $this->bgWidth, $this->bgHeight);
 
         $this->imSlide = imagecreatetruecolor($this->markWidth, $this->bgHeight);
         if ($this->imSlide === false) {
@@ -2037,9 +2088,18 @@ class Captcha
             throw new RuntimeException('加载滑块图片失败: ' . $markFile);
         }
 
+        // imSlide 为真彩画布，必须先开启 alpha 混合并填充完全透明，
+        // 再用 imagecolortransparent 指定透明色（真彩图索引 0 不可直接当透明色）。
+        imagealphablending($this->imSlide, true);
+        imagesavealpha($this->imSlide, true);
+        $transparent = imagecolorallocatealpha($this->imSlide, 0, 0, 0, 127);
+        imagefill($this->imSlide, 0, 0, $transparent);
+        imagecolortransparent($this->imSlide, $transparent);
+
+        // 滑块内容取自已缩放、坐标系一致的 imScaledBg（无缺口的原图块）
         imagecopy(
             $this->imSlide,
-            $this->imFullBg,
+            $this->imScaledBg,
             0,
             $this->posY,
             $this->posX,
@@ -2049,8 +2109,6 @@ class Captcha
         );
 
         imagecopy($this->imSlide, $imgMark, 0, $this->posY, 0, 0, $this->markWidth, $this->markHeight);
-
-        imagecolortransparent($this->imSlide, 0);
 
         $this->destroyImage($imgMark);
     }
@@ -2103,7 +2161,7 @@ class Captcha
             $this->bgHeight
         );
 
-        imagecopy($this->im, $this->imFullBg, 0, $this->bgHeight * 2, 0, 0, $this->bgWidth, $this->bgHeight);
+        imagecopy($this->im, $this->imScaledBg, 0, $this->bgHeight * 2, 0, 0, $this->bgWidth, $this->bgHeight);
     }
 
     /**
@@ -2143,6 +2201,7 @@ class Captcha
         $this->destroyImage($this->im);
         $this->destroyImage($this->imFullBg);
         $this->destroyImage($this->imBg);
+        $this->destroyImage($this->imScaledBg);
         $this->destroyImage($this->imSlide);
     }
 

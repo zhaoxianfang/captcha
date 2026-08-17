@@ -68,7 +68,10 @@ if (!function_exists('xf_captcha_check')) {
         }
 
         $captcha = new Captcha($config);
-        $result = $captcha->verify($offset ?: null, $token, $clickPoints);
+        // 注意：offset 为数字 0 是合法的滑动值，必须用严格空字符串判断，
+        // 不能用 ?: （会把 0 当成 falsy 吞掉，导致 offset=0 时校验失败）。
+        $offsetArg = ($offset === '' || $offset === null) ? null : $offset;
+        $result = $captcha->verify($offsetArg, $token, $clickPoints);
         return $result['success'];
     }
 }
