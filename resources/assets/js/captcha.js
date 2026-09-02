@@ -383,15 +383,34 @@
             const x = Math.round((evt.clientX - rect.left) * scaleX);
             const y = Math.round((evt.clientY - rect.top) * scaleY);
 
+            // 防抖去重：移动端一次物理点击会依次触发 touchstart 与 click，
+            // 同一位置 400ms 内的重复事件忽略，避免一次点击被计数两次
+            const now = Date.now();
+            if (xfCaptcha._lastClickTime && now - xfCaptcha._lastClickTime < 400) {
+                const dx = evt.clientX - xfCaptcha._lastClickClientX;
+                const dy = evt.clientY - xfCaptcha._lastClickClientY;
+                if (dx * dx + dy * dy < 100) { // 10px 内视为同一次点击
+                    return;
+                }
+            }
+            xfCaptcha._lastClickTime = now;
+            xfCaptcha._lastClickClientX = evt.clientX;
+            xfCaptcha._lastClickClientY = evt.clientY;
+
             // 检查是否在有效范围内（留出边缘容错）
             if (x < -10 || x > xfCaptcha._imgWidth + 10 || y < -10 || y > xfCaptcha._imgHeight + 10) {
                 return;
             }
 
-            // 记录点击位置（限制在图片范围内）
+            // 记录点击位置（限制在图片范围内），并附带相对首点的耗时 t（毫秒），
+            // 供服务端做“机器人瞬间点完/连点”检测
             const safeX = Math.max(0, Math.min(x, xfCaptcha._imgWidth));
             const safeY = Math.max(0, Math.min(y, xfCaptcha._imgHeight));
-            xfCaptcha._clickPoints.push({ x: safeX, y: safeY });
+            xfCaptcha._clickPoints.push({
+                x: safeX,
+                y: safeY,
+                t: now - (xfCaptcha._clickStartTime || now),
+            });
             xfCaptcha._clickCount++;
 
             // 显示点击标记和动画
@@ -718,10 +737,20 @@
             const handleDom = document.querySelector(xfCaptcha._options.handleDom);
             if (!handleDom) return;
 
+            const token = xfCaptcha._getToken();
+
+            // 无 token（backend_only 模式）：移除可能残留的旧输入框，
+            // 避免向表单提交无效/伪造令牌
+            if (!token) {
+                const staleInput = document.querySelector('input[name="' + xfCaptcha._options.inputName + '"]');
+                if (staleInput) staleInput.remove();
+                return;
+            }
+
             // 检查是否已存在同名输入框
             const existingInput = document.querySelector('input[name="' + xfCaptcha._options.inputName + '"]');
             if (existingInput) {
-                existingInput.value = xfCaptcha._getToken();
+                existingInput.value = token;
                 return;
             }
 
@@ -729,7 +758,7 @@
             const input = document.createElement("input");
             input.type = "hidden";
             input.name = xfCaptcha._options.inputName;
-            input.value = xfCaptcha._getToken();
+            input.value = token;
 
             // 优先插入到最近的表单中，否则插入到触发元素之后
             const form = handleDom.closest("form");
@@ -742,16 +771,15 @@
 
         /**
          * 获取验证令牌
+         *
+         * 双重验证（dual）模式下返回后端生成的一次性 token；
+         * 纯后端验证（backend_only）模式下后端不返回 token，这里返回 null，
+         * 由服务端依据会话中的“已通过验证”状态幂等放行，不再生成泄露偏移量的前端假令牌。
+         *
+         * @returns {string|null}
          */
         _getToken() {
-            // 优先使用后端返回的 token（双重验证模式）
-            if (xfCaptcha._token) {
-                return xfCaptcha._token;
-            }
-            // 如果没有后端 token，生成前端临时令牌
-            const timestamp = Date.now();
-            const random = Math.random().toString(36).substring(2, 15);
-            return timestamp + "_" + random + "_" + xfCaptcha._markOffset;
+            return xfCaptcha._token || null;
         },
 
         /**
@@ -1204,17 +1232,25 @@
 
         /**
          * 刷新验证码
+         *
+         * @param {boolean} switchType 是否强制切换验证码类型（仅用户手动点击刷新按钮时传 true；
+         *                              失败自动刷新 / show / reset 保持当前类型，避免打断用户操作）
          */
-        refresh() {
+        refresh(switchType) {
             xfCaptcha._errorCount = 0;
             xfCaptcha._isDrawBg = false;
             xfCaptcha._result = false;
             xfCaptcha._imgLoaded = false;
+            // 重置滑块位移/缺口纵坐标，避免上一次失败拖拽的残留偏移
+            // 使新验证码的滑块标记停留在错误位置
+            xfCaptcha._markOffset = 0;
+            xfCaptcha._markTopY = 0;
             xfCaptcha._clickPoints = [];
             xfCaptcha._clickCount = 0;
             xfCaptcha._token = null;
             xfCaptcha._doing = false;
             xfCaptcha._slideTrack = [];
+            xfCaptcha._clickStartTime = Date.now();
             xfCaptcha._clearClickMarkers();
 
             const bgCanvas = document.querySelector(".captcha_canvas_bg");
@@ -1237,12 +1273,14 @@
                 removeClass(loading, "captcha_loading_error");
             }
 
-            // 添加随机种子参数，确保 both 模式下能随机切换类型
+            // 添加随机种子参数破坏浏览器缓存；仅在手动刷新时附带 type_switch 强制切换类型
             const seed = Math.random().toString(36).substring(2, 15);
+            const url = xfCaptcha._options.dataUrl + "?t=" + Date.now() + "&_s=" + seed
+                + (switchType ? "&type_switch=1" : "");
             const ajax = new AjaxRequest();
             ajax.request(
                 "GET",
-                xfCaptcha._options.dataUrl + "?t=" + Date.now() + "&_s=" + seed,
+                url,
                 {
                     success: function (response) {
                         try {
@@ -1280,7 +1318,11 @@
 
                                 xfCaptcha._img = new Image();
                                 xfCaptcha._img.onload = function () {
-                                    // 计算画布显示尺寸与图片逻辑尺寸的缩放比例
+                                    // 先显示画布再测量显示尺寸：display:none 时 getBoundingClientRect()
+                                    // 恒为 0，会导致缩放比例恒为 1、坐标换算失真。
+                                    // 此阶段 loading 遮罩仍覆盖画布，不会产生可见闪烁。
+                                    if (bgCanvas) bgCanvas.style.display = "block";
+                                    if (markCanvas) markCanvas.style.display = "block";
                                     if (bgCanvas && bgCanvas.width > 0) {
                                         const rect = bgCanvas.getBoundingClientRect();
                                         const rw = rect.width || bgCanvas.width;
@@ -1291,8 +1333,6 @@
                                     const markCtx = markCanvas.getContext("2d");
                                     markCtx.clearRect(0, 0, markCanvas.width, markCanvas.height);
                                     xfCaptcha._imgLoaded = true;
-                                    if (bgCanvas) bgCanvas.style.display = "block";
-                                    if (markCanvas) markCanvas.style.display = "block";
                                     if (loading) {
                                         loading.style.display = "none";
                                         loading.innerHTML = "";
@@ -1431,7 +1471,10 @@
 
             const refreshBtn = document.querySelector(".captcha_refresh");
             if (refreshBtn) {
-                xfCaptcha._bind(refreshBtn, "click", xfCaptcha.refresh);
+                // 手动刷新：both 模式下强制切换验证码类型（type_switch=1）
+                xfCaptcha._bind(refreshBtn, "click", function () {
+                    xfCaptcha.refresh(true);
+                });
             }
 
             const triggers = document.querySelectorAll(xfCaptcha._options.handleDom);

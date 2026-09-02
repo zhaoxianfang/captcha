@@ -133,8 +133,10 @@ class CaptchaController
     public function data(): mixed
     {
         try {
-            // 检测是否为刷新操作（通过参数判断）
-            $isRefresh = isset($_GET['refresh']) || isset($_GET['_s']);
+            // 检测是否为刷新操作。注意：
+            // - `_s` 仅用于破坏浏览器缓存，不触发类型切换；
+            // - `type_switch` / `refresh` 才强制切换验证码类型（前端手动刷新按钮）。
+            $isRefresh = isset($_GET['type_switch']) || isset($_GET['refresh']);
             $result = $this->captcha->makeData([], $isRefresh);
 
             $response = [
@@ -151,6 +153,8 @@ class CaptchaController
             if ($result['type'] === Captcha::TYPE_SLIDE) {
                 $response['mark_width'] = $result['mark_width'];
                 $response['mark_height'] = $result['mark_height'];
+                $response['pos_x'] = $result['pos_x'];
+                $response['pos_y'] = $result['pos_y'];
             } else {
                 $response['char_count'] = $result['char_count'];
             }

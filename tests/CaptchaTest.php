@@ -448,13 +448,18 @@ class CaptchaTest extends TestCase
         $posX = (int) ($session['xf_captcha_r'] ?? null);
         $this->assertNotNull($posX, 'session 中应存储正确的缺口位置');
 
+        // 未验证前，明显错误的偏移量应验证失败
+        $badFirst = $captcha->verify($posX + 50);
+        $this->assertFalse($badFirst['success'], '未验证前明显错误的偏移量应验证失败');
+
         // 正确位置（容错范围内）应验证通过
         $ok = $captcha->verify($posX);
         $this->assertTrue($ok['success'], '正确偏移量应验证通过: ' . ($ok['message'] ?? ''));
 
-        // 偏移过大应验证失败
-        $bad = $captcha->verify($posX + 50);
-        $this->assertFalse($bad['success'], '明显错误的偏移量应验证失败');
+        // backend_only：验证通过后位置数据已被消费（R 删除），
+        // 表单提交时服务端依据“会话已验证”状态幂等放行
+        $replay = $captcha->verify($posX + 50);
+        $this->assertTrue($replay['success'], 'backend_only 验证通过后表单提交应幂等放行');
     }
 
     /**
@@ -481,18 +486,24 @@ class CaptchaTest extends TestCase
 
         // 完全正确的点位（按序）
         $points = array_map(fn($c) => ['x' => $c['x'], 'y' => $c['y']], $stored);
-        $ok = $captcha->verify(null, null, $points);
-        $this->assertTrue($ok['success'], '正确的点击位置应验证通过: ' . ($ok['message'] ?? ''));
 
-        // 把所有点位整体偏移 60px（远超容错）应失败
+        // 未验证前，把所有点位整体偏移 60px（远超容错）应失败
         $wrong = array_map(fn($c) => ['x' => $c['x'] + 60, 'y' => $c['y'] + 60], $stored);
-        $bad = $captcha->verify(null, null, $wrong);
-        $this->assertFalse($bad['success'], '明显错误的点击位置应验证失败');
+        $badFirst = $captcha->verify(null, null, $wrong);
+        $this->assertFalse($badFirst['success'], '未验证前明显错误的点击位置应验证失败');
 
-        // 点位数量不足应失败
+        // 未验证前，点位数量不足应失败
         $partial = array_slice($points, 0, 2);
         $badCount = $captcha->verify(null, null, $partial);
         $this->assertFalse($badCount['success'], '点击数量不足应失败');
+
+        // 正确位置应验证通过
+        $ok = $captcha->verify(null, null, $points);
+        $this->assertTrue($ok['success'], '正确的点击位置应验证通过: ' . ($ok['message'] ?? ''));
+
+        // backend_only：验证通过后答案已消费，表单提交幂等放行
+        $replay = $captcha->verify(null, null, $wrong);
+        $this->assertTrue($replay['success'], 'backend_only 验证通过后表单提交应幂等放行');
     }
 
     /**
@@ -571,7 +582,7 @@ class CaptchaTest extends TestCase
     /**
      * 测试验证成功后的重放防护（答案立即作废）
      */
-    public function testReplayProtectionAfterSuccess(): void
+    public function testBackendOnlyIdempotentAfterSuccess(): void
     {
         $captcha = new Captcha([
             'captcha_type' => Captcha::TYPE_SLIDE,
@@ -593,8 +604,198 @@ class CaptchaTest extends TestCase
         $first = $captcha->verify($posX);
         $this->assertTrue($first['success'], '首次验证应通过');
 
-        // 成功后再用同一偏移量重放：答案已作废，应失败
+        // backend_only：验证通过后同一答案（甚至错误答案）也幂等放行——
+        // 这是“验证一次、会话内通过”的设计语义，表单提交不再二次校验位置。
+        // 重放防护由 dual（双重验证）模式的一次性 token 保证（见 testDualVerifyTokenFlow）。
         $replay = $captcha->verify($posX);
-        $this->assertFalse($replay['success'], '验证成功后同一答案不应被重复使用（重放防护）');
+        $this->assertTrue($replay['success'], 'backend_only 验证通过后表单提交应幂等放行');
+
+        // 重新生成验证码：旧的成功状态被重置，必须重新验证
+        $captcha->makeData();
+        $fresh = $captcha->verify(null, null, []);
+        $this->assertFalse($fresh['success'], '重新生成验证码后需重新验证');
+    }
+
+    /**
+     * 测试 makeData 生成新验证码后：旧 token 作废、check 状态重置（防重放）
+     */
+    public function testMakeDataResetsTokenAndCheck(): void
+    {
+        $captcha = new Captcha([
+            'captcha_type' => Captcha::TYPE_SLIDE,
+            'verify_mode' => Captcha::VERIFY_DUAL,
+            'slide' => ['track_verify' => false],
+        ]);
+
+        try {
+            $captcha->makeData();
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('背景图片', $e->getMessage());
+            return;
+        }
+
+        $session = $this->getMockSession($captcha);
+        $posX = (int) ($session['xf_captcha_r'] ?? null);
+
+        // 首次验证通过，生成一次性 token
+        $first = $captcha->verify($posX);
+        $this->assertTrue($first['success']);
+        $this->assertNotEmpty($first['token'], 'dual 模式首次验证应返回 token');
+
+        // 重新生成验证码：旧 token 清除、check 重置为 none
+        $captcha->makeData();
+        $session2 = $this->getMockSession($captcha);
+        $this->assertArrayNotHasKey('xf_captcha_token', $session2, 'makeData 后旧 token 应被清除');
+        $this->assertEquals('none', $session2['xf_captcha_check'] ?? 'none', 'makeData 后 check 应重置为 none');
+
+        // 旧 token 重放应失败（新验证码必须重新验证）
+        $replay = $captcha->verify(null, $first['token']);
+        $this->assertFalse($replay['success'], 'makeData 后旧 token 重放应失败');
+    }
+
+    /**
+     * 测试 verifySecondary 的 token 类型安全：session 中 token 被污染为非字符串不应崩溃
+     */
+    public function testSecondaryVerifyTypeSafety(): void
+    {
+        $captcha = new Captcha([
+            'captcha_type' => Captcha::TYPE_SLIDE,
+            'verify_mode' => Captcha::VERIFY_DUAL,
+            'slide' => ['track_verify' => false],
+        ]);
+
+        try {
+            $captcha->makeData();
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('背景图片', $e->getMessage());
+            return;
+        }
+
+        $session = $this->getMockSession($captcha);
+        $posX = (int) ($session['xf_captcha_r'] ?? null);
+        $captcha->verify($posX); // 首次验证，生成 token
+
+        // 污染 session 中的 token 为非字符串
+        $ref = new \ReflectionClass($captcha);
+        $prop = $ref->getProperty('mockSession');
+        if (PHP_VERSION_ID < 80500) {
+            $prop->setAccessible(true);
+        }
+        $mock = $prop->getValue($captcha);
+        $mock['xf_captcha_token'] = ['hacked'];
+        $prop->setValue($captcha, $mock);
+
+        // 不应抛 TypeError，返回失败即可
+        $result = $captcha->verify(null, 'some-token');
+        $this->assertFalse($result['success']);
+    }
+
+    /**
+     * 测试点击验证码耗时校验：总耗时过短 / 相邻点击间隔过短判定为机器人
+     */
+    public function testVerifyClickRejectsFastClick(): void
+    {
+        $captcha = new Captcha([
+            'captcha_type' => Captcha::TYPE_CLICK,
+            'verify_mode' => Captcha::VERIFY_BACKEND_ONLY,
+            'click' => ['char_count' => 3, 'fault_tolerance' => 25],
+        ]);
+
+        try {
+            $captcha->makeData();
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('背景图片', $e->getMessage());
+            return;
+        }
+
+        $session = $this->getMockSession($captcha);
+        $stored = $session['xf_captcha_click_data'] ?? [];
+        $this->assertCount(3, $stored);
+
+        // 相邻点击间隔过短（50ms < min_interval 120ms）→ 拒绝
+        $fast = [];
+        foreach ($stored as $i => $c) {
+            $fast[] = ['x' => $c['x'], 'y' => $c['y'], 't' => $i * 50];
+        }
+        $r1 = $captcha->verify(null, null, $fast);
+        $this->assertFalse($r1['success'], '点击间隔过短应判定为机器人');
+        $this->assertStringContainsString('间隔过短', $r1['message']);
+
+        // 间隔正常但总耗时不足（400ms < min_time 600ms）→ 拒绝
+        $total = [];
+        foreach ($stored as $i => $c) {
+            $total[] = ['x' => $c['x'], 'y' => $c['y'], 't' => $i * 200];
+        }
+        $r2 = $captcha->verify(null, null, $total);
+        $this->assertFalse($r2['success'], '总耗时过短应判定为机器人');
+        $this->assertStringContainsString('过快', $r2['message']);
+
+        // 正常耗时（间隔 300ms、总耗时 600ms）→ 通过
+        $normal = [];
+        foreach ($stored as $i => $c) {
+            $normal[] = ['x' => $c['x'], 'y' => $c['y'], 't' => $i * 300];
+        }
+        $r3 = $captcha->verify(null, null, $normal);
+        $this->assertTrue($r3['success'], '正常点击耗时应通过: ' . ($r3['message'] ?? ''));
+    }
+
+    /**
+     * 测试失败超限后点击答案数据被清除（防止残留利用）
+     */
+    public function testFailedCheckClearsClickData(): void
+    {
+        $captcha = new Captcha([
+            'captcha_type' => Captcha::TYPE_CLICK,
+            'verify_mode' => Captcha::VERIFY_BACKEND_ONLY,
+            'click' => ['char_count' => 2, 'fault_tolerance' => 10],
+            'max_error_count' => 2,
+        ]);
+
+        try {
+            $captcha->makeData();
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('背景图片', $e->getMessage());
+            return;
+        }
+
+        $session = $this->getMockSession($captcha);
+        $stored = $session['xf_captcha_click_data'] ?? [];
+        $this->assertNotEmpty($stored, '应生成点击答案');
+
+        $wrong = array_map(fn($c) => ['x' => $c['x'] + 100, 'y' => $c['y'] + 100], $stored);
+        // 连续失败超过 max_error_count 次
+        $captcha->verify(null, null, $wrong);
+        $captcha->verify(null, null, $wrong);
+        $captcha->verify(null, null, $wrong);
+
+        $sessionAfter = $this->getMockSession($captcha);
+        $this->assertArrayNotHasKey('xf_captcha_click_data', $sessionAfter, '失败超限后点击答案应被清除');
+    }
+
+    /**
+     * 测试空字符串 token 被归一化为 null（走首次验证路径，而非错误的二次验证路径）
+     */
+    public function testEmptyStringTokenNormalized(): void
+    {
+        $captcha = new Captcha([
+            'captcha_type' => Captcha::TYPE_SLIDE,
+            'verify_mode' => Captcha::VERIFY_DUAL,
+            'slide' => ['track_verify' => false],
+        ]);
+
+        try {
+            $captcha->makeData();
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('背景图片', $e->getMessage());
+            return;
+        }
+
+        $session = $this->getMockSession($captcha);
+        $posX = (int) ($session['xf_captcha_r'] ?? null);
+
+        // 空字符串 token + 正确偏移量 → 应视为首次验证并成功
+        $result = $captcha->verify($posX, '');
+        $this->assertTrue($result['success'], '空字符串 token 应视为未携带');
+        $this->assertNotEmpty($result['token'], 'dual 模式应返回新 token');
     }
 }

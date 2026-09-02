@@ -74,7 +74,8 @@ class CaptchaService extends Service
             try {
                 /** @var Captcha $captcha */
                 $captcha = app('xfCaptcha');
-                $isRefresh = request()->has('refresh') || request()->has('_s');
+                // `_s` 仅破坏浏览器缓存；`type_switch` / `refresh` 才强制切换类型
+                $isRefresh = request()->has('type_switch') || request()->has('refresh');
                 $result = $captcha->makeData([], $isRefresh);
 
                 $response = [
@@ -90,6 +91,8 @@ class CaptchaService extends Service
                 if ($result['type'] === Captcha::TYPE_SLIDE) {
                     $response['mark_width'] = $result['mark_width'];
                     $response['mark_height'] = $result['mark_height'];
+                    $response['pos_x'] = $result['pos_x'];
+                    $response['pos_y'] = $result['pos_y'];
                 } else {
                     $response['char_count'] = $result['char_count'];
                 }

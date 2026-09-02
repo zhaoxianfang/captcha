@@ -111,7 +111,8 @@ class Adapter
 
         try {
             $captcha = new Captcha($this->config);
-            $isRefresh = isset($_GET['refresh']) || isset($_GET['_s']);
+            // `_s` 仅破坏浏览器缓存；`type_switch` / `refresh` 才强制切换类型
+            $isRefresh = isset($_GET['type_switch']) || isset($_GET['refresh']);
             $result = $captcha->makeData([], $isRefresh);
 
             $response = [
@@ -127,6 +128,8 @@ class Adapter
             if ($result['type'] === Captcha::TYPE_SLIDE) {
                 $response['mark_width'] = $result['mark_width'];
                 $response['mark_height'] = $result['mark_height'];
+                $response['pos_x'] = $result['pos_x'];
+                $response['pos_y'] = $result['pos_y'];
             } else {
                 $response['char_count'] = $result['char_count'];
             }

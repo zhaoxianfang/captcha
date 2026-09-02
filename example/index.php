@@ -56,10 +56,16 @@ if (strpos($uri, '/captcha/') !== false) {
 
 // 处理表单提交
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // 空字符串 token 视为未携带（backend_only 模式下前端不产生 token）
+    $token = $_POST['xf_captcha_token'] ?? null;
+    if ($token === '') {
+        $token = null;
+    }
+
     $captcha = new Captcha();
     $result = $captcha->verify(
         $_POST['captcha_r'] ?? null,
-        $_POST['xf_captcha_token'] ?? null,
+        $token,
         json_decode($_POST['click_points'] ?? '[]', true)
     );
 
@@ -232,8 +238,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     return;
                 }
 
-                // 获取验证令牌
-                const token = xfCaptcha.getToken();
+                // 获取验证令牌（backend_only 模式下为 null，服务端按会话状态幂等放行）
+                const token = xfCaptcha.getToken() || '';
 
                 // 发送验证请求到服务器
                 fetch('', {

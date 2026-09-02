@@ -68,6 +68,12 @@ class Captcha
     /** 验证码默认过期时间（秒） */
     private const DEFAULT_CAPTCHA_EXPIRE = 600;
 
+    /** 点击验证码默认最小总耗时（毫秒）：低于该值视为机器人瞬间点完 */
+    private const DEFAULT_CLICK_MIN_TIME = 600;
+
+    /** 点击验证码默认最小相邻点击间隔（毫秒）：低于该值视为机器人连点 */
+    private const DEFAULT_CLICK_MIN_INTERVAL = 120;
+
     /** 默认最小滑块宽度 */
     private const DEFAULT_MIN_MARK_WIDTH = 30;
 
@@ -673,6 +679,11 @@ class Captcha
             ];
         }
 
+        // 生成新验证码前作废上一次的 token / check 状态：
+        // 防止“刷新后旧 token 仍可通过二次验证”的重放漏洞，同时避免 isChecked() 残留误报。
+        $this->clearToken();
+        $this->setSessionValue($this->sessionKeyCheck, 'none');
+
         // 确定验证码类型（刷新时强制切换）
         $this->captchaType = $this->getCaptchaType($refresh);
         $this->setSessionValue($this->sessionKeyType, $this->captchaType);
@@ -701,6 +712,9 @@ class Captcha
             $imageData = $this->outputImageToBuffer($this->im);
             $this->destroy();
 
+            // 生成滑动验证码后作废可能残留的点击验证码答案，避免类型切换时数据交叉复用
+            $this->deleteSessionValue($this->sessionKeyClickData);
+
             return [
                 'type' => self::TYPE_SLIDE,
                 'image' => $imageData,
@@ -709,6 +723,10 @@ class Captcha
                 'bg_height' => $this->bgHeight,
                 'mark_width' => $this->markWidth,
                 'mark_height' => $this->markHeight,
+                // 缺口/滑块位置（图片像素坐标）。缺口本就显示在背景图上，返回无安全风险；
+                // 前端用它作为滑动轨迹 y 轴基准与滑块初始 x 位置，使前后端坐标口径一致
+                'pos_x' => (int) $this->posX,
+                'pos_y' => (int) $this->posY,
                 'char_count' => 0,
                 'hint' => '拖动左边滑块完成上方拼图',
             ];
@@ -736,6 +754,8 @@ class Captcha
             $this->setSessionValue($this->sessionKeyErr, 0);
             $this->setSessionValue($this->sessionKeyFingerprint, $this->requestFingerprint);
             $this->setSessionValue($this->sessionKeyCreatedAt, time());
+            // 生成点击验证码后作废可能残留的滑动缺口位置，避免类型切换时数据交叉复用
+            $this->deleteSessionValue($this->sessionKeyR);
 
             // 生成提示文字
             $clickConfig = $this->config['click'] ?? [];
@@ -1306,24 +1326,26 @@ class Captcha
     /**
      * 验证用户操作结果
      *
-     * @param string|int|null $offset 用户滑动的偏移量（滑动验证码）
-     * @param string|null $token 验证令牌（双重验证模式使用）
-     * @param array $clickPoints 用户点击的坐标点（点击验证码）
-     *
-     * @return array 验证结果 ['success' => bool, 'token' => string|null, 'message' => string]
-     */
-    /**
-     * 验证用户操作结果
+     * 统一入口：滑动验证码与点击验证码都支持
+     *   - dual（双重验证）：首次验证生成一次性 token，表单提交时凭 token 二次验证；
+     *   - backend_only（纯后端验证）：首次验证即通过，表单提交时按会话“已验证”状态幂等放行；
+     *   - frontend_only（仅前端验证，不安全，仅测试）：直接通过。
      *
      * @param string|int|null $offset      用户滑动的偏移量（滑动验证码）
      * @param string|null     $token       验证令牌（双重验证模式使用）
-     * @param array           $clickPoints 用户点击的坐标点（点击验证码）
+     * @param array           $clickPoints 用户点击的坐标点（点击验证码）[['x'=>int,'y'=>int,'t'=>int],...]
      * @param array           $slideTrack  滑动轨迹数据 [['x'=>int,'y'=>int,'t'=>int],...]
      *
      * @return array 验证结果 ['success' => bool, 'token' => string|null, 'message' => string]
      */
     public function verify(string|int|null $offset = null, ?string $token = null, array $clickPoints = [], array $slideTrack = []): array
     {
+        // 空字符串 token 视为未携带（与 null 语义一致），
+        // 避免表单中存在空字段时进入错误的分支路径
+        if ($token === '') {
+            $token = null;
+        }
+
         // 速率限制检查
         if (!$this->checkRateLimit()) {
             return [
@@ -1337,6 +1359,18 @@ class Captcha
         $verifyMode = $this->config['verify_mode'] ?? self::VERIFY_DUAL;
         if ($verifyMode === self::VERIFY_FRONTEND_ONLY) {
             return $this->verifyFrontendOnly();
+        }
+
+        // 纯后端验证模式（backend_only）：首次验证通过后 session 标记为 used，
+        // 表单提交时（未携带 token 且已通过验证）幂等放行，
+        // 修复此前“前端验证成功、后端再次验证却因数据已消费而失败”的缺陷。
+        // 注意：仅 backend_only 模式放行；dual 模式必须走一次性 token 二次验证，防止绕过。
+        if ($verifyMode === self::VERIFY_BACKEND_ONLY && $token === null && $this->isChecked()) {
+            return [
+                'success' => true,
+                'token' => null,
+                'message' => '验证已通过',
+            ];
         }
 
         // 安全校验：检查请求指纹是否匹配（防止会话劫持）
@@ -1381,13 +1415,11 @@ class Captcha
             return $this->verifyClick($clickPoints, $token);
         }
 
-        // 滑动验证码验证
+        // 滑动验证码验证（frontend_only 已在方法顶部统一放行，无需在此分支处理）
         $slideVerifyMode = $this->config['verify_mode'] ?? self::VERIFY_DUAL;
 
         return match ($slideVerifyMode) {
-            self::VERIFY_FRONTEND_ONLY => $this->verifyFrontendOnly(),
             self::VERIFY_BACKEND_ONLY => $this->verifyBackendOnly($offset, $slideTrack),
-            self::VERIFY_DUAL => $this->verifyDual($offset, $token, $slideTrack),
             default => $this->verifyDual($offset, $token, $slideTrack),
         };
     }
@@ -1427,6 +1459,40 @@ class Captcha
             ];
         }
 
+        // 机器人检测：点击耗时校验。前端为每个点击点附带相对首点的耗时 t（毫秒，首点 t=0）：
+        // 总耗时过短（机器人瞬间点完）或相邻点击间隔过短（连点）都判定为机器人。
+        // t 缺失时（兼容老版本前端）跳过耗时校验。
+        $hasTiming = true;
+        $clickMinTime = $this->filterInt($this->config['click']['min_time'] ?? self::DEFAULT_CLICK_MIN_TIME, 200, 10000);
+        $clickMinInterval = $this->filterInt($this->config['click']['min_interval'] ?? self::DEFAULT_CLICK_MIN_INTERVAL, 50, 5000);
+        $totalTime = 0;
+        $prevT = null;
+        foreach ($clickPoints as $point) {
+            if (!is_array($point) || !isset($point['t']) || !is_numeric($point['t'])) {
+                $hasTiming = false;
+                break;
+            }
+            $t = max(0.0, (float) $point['t']);
+            $totalTime = max($totalTime, $t);
+            if ($prevT !== null && ($t - $prevT) < $clickMinInterval) {
+                $this->handleFailedCheck();
+                return [
+                    'success' => false,
+                    'token' => null,
+                    'message' => '点击间隔过短，请正常操作',
+                ];
+            }
+            $prevT = $t;
+        }
+        if ($hasTiming && $totalTime < $clickMinTime) {
+            $this->handleFailedCheck();
+            return [
+                'success' => false,
+                'token' => null,
+                'message' => '操作过快，请正常点击',
+            ];
+        }
+
         // 验证每个点击位置
         foreach ($storedData as $index => $expected) {
             if (!isset($clickPoints[$index])) {
@@ -1439,6 +1505,15 @@ class Captcha
             }
 
             $actual = $clickPoints[$index];
+            if (!is_array($actual) || !isset($actual['x'], $actual['y'])
+                || !is_numeric($actual['x']) || !is_numeric($actual['y'])) {
+                $this->handleFailedCheck();
+                return [
+                    'success' => false,
+                    'token' => null,
+                    'message' => '点击数据无效，请重试',
+                ];
+            }
             $distance = hypot(
                 (float) ($actual['x'] - $expected['x']),
                 (float) ($actual['y'] - $expected['y'])
@@ -1459,6 +1534,8 @@ class Captcha
 
         if ($verifyMode === self::VERIFY_BACKEND_ONLY) {
             $this->handleSuccessfulCheck();
+            // 标记已验证：表单提交时 verify() 顶部幂等放行（无需再携带 token）
+            $this->setSessionValue($this->sessionKeyCheck, 'used');
             return [
                 'success' => true,
                 'token' => null,
@@ -1563,6 +1640,8 @@ class Captcha
         }
 
         $this->handleSuccessfulCheck();
+        // 标记已验证：表单提交时 verify() 顶部幂等放行（无需再携带 token）
+        $this->setSessionValue($this->sessionKeyCheck, 'used');
         return [
             'success' => true,
             'token' => null,
@@ -1624,7 +1703,11 @@ class Captcha
         }
 
         // 检查token是否匹配
-        $storedToken = $this->getSessionValue($this->sessionKeyToken);
+        // 注意：hash_equals 要求两个参数均为字符串，session 中值若被污染为非字符串会 TypeError，
+        // 这里统一归一为字符串（非标量视为不匹配），保证任何情况下都不会 500 或触发
+        // “Array to string conversion”警告
+        $storedValue = $this->getSessionValue($this->sessionKeyToken);
+        $storedToken = is_scalar($storedValue) ? (string) $storedValue : '';
         if (!hash_equals($storedToken, $token)) {
             return [
                 'success' => false,
@@ -1705,7 +1788,9 @@ class Captcha
         $this->setSessionValue($this->sessionKeyErr, $errCount);
 
         if ($errCount > $this->maxErrorCount) {
+            // 超限时同时作废滑动缺口位置与点击答案，强制用户刷新验证码
             $this->deleteSessionValue($this->sessionKeyR);
+            $this->deleteSessionValue($this->sessionKeyClickData);
         }
 
         $this->setSessionValue($this->sessionKeyCheck, 'error');
@@ -1813,8 +1898,11 @@ class Captcha
         $totalTime = $points[count($points) - 1]['t'] - $points[0]['t'];
         $totalDistance = 0;
         $directionChanges = 0;
+        $verticalJitter = 0;      // 累计垂直位移 Σ|dy|（图片像素）
+        $yDirectionChanges = 0;   // 垂直方向变化次数（dy 正负翻转）
         $speeds = [];
         $prevDx = 0;
+        $prevDy = 0;
 
         for ($i = 1; $i < count($points); $i++) {
             $dx = $points[$i]['x'] - $points[$i - 1]['x'];
@@ -1824,6 +1912,18 @@ class Captcha
             $dist = hypot($dx, $dy);
             $totalDistance += $dist;
             $speeds[] = $dist / $dt;
+
+            // 累计垂直位移：人类滑动必然伴随垂直方向微小颤动，
+            // 而自动化工具拖拽通常是像素级直线、几乎没有垂直位移。
+            $verticalJitter += abs($dy);
+
+            // 检测垂直方向变化（人类拖动时手部会有轻微上下起伏）
+            if ($i > 1) {
+                if (($dy > 0.5 && $prevDy < -0.5) || ($dy < -0.5 && $prevDy > 0.5)) {
+                    $yDirectionChanges++;
+                }
+            }
+            $prevDy = $dy;
 
             // 检测方向变化（人类滑动会有自然的方向微调）
             if ($i > 1) {
@@ -1841,19 +1941,19 @@ class Captcha
                 'min_time' => 500,      // 最少耗时 500ms
                 'max_speed' => 8,       // 最大速度 8px/ms
                 'min_points' => 8,      // 最少轨迹点数
-                'max_straight' => 0.96, // 直线度最大 96%
+                'min_vertical' => 5,    // 累计垂直位移 ≥ 5px（图片像素）
             ],
             'loose' => [
                 'min_time' => 150,
                 'max_speed' => 20,
                 'min_points' => 3,
-                'max_straight' => 0.995,
+                'min_vertical' => 1,
             ],
             default => [ // normal
                 'min_time' => 200,
                 'max_speed' => 12,
                 'min_points' => 4,
-                'max_straight' => 0.98,
+                'min_vertical' => 2,
             ],
         };
 
@@ -1880,16 +1980,17 @@ class Captcha
             }
         }
 
-        // 检查直线度（人类滑动不会完全直线）
-        if ($totalDistance > 0) {
-            $startEndDist = hypot(
-                $points[count($points) - 1]['x'] - $points[0]['x'],
-                $points[count($points) - 1]['y'] - $points[0]['y']
-            );
-            $straightness = $startEndDist / $totalDistance;
-            if ($straightness > $thresholds['max_straight']) {
-                return ['success' => false, 'message' => '轨迹异常，请重试'];
-            }
+        // 检查“人性化”垂直抖动（替代传统“直线度”判定）：
+        // 人类滑动必然伴随垂直方向微小颤动，而自动化工具（Selenium/Puppeteer 等）
+        // 拖拽通常是像素级直线、几乎没有垂直位移。
+        // “直线度”（起点终点距离 / 轨迹总长）无法区分“认真对准缺口的人类”（近乎直线）
+        // 与“机器人直线”，阈值过严会把真实用户误判为机器人——
+        // 这正是此前真实用户频繁提示“轨迹异常，请重试”的根因。
+        // 判定依据（满足其一即视为人类行为）：
+        //   1) 累计垂直位移 Σ|dy| ≥ min_vertical（图片像素）；
+        //   2) 垂直方向变化 ≥ 1 次（dy 正负翻转）。
+        if ($verticalJitter < $thresholds['min_vertical'] && $yDirectionChanges < 1) {
+            return ['success' => false, 'message' => '轨迹异常，请重试'];
         }
 
         // 检查速度变化（人类有加减速过程）
