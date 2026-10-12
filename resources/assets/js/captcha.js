@@ -1608,6 +1608,26 @@
     // 暴露到全局
     window.xfCaptcha = xfCaptcha;
 
+    /**
+     * 统一重置契约：登录 / 注册等使用本验证码的表单，在「提交并收到响应数据后，
+     * 若 auth 相关处理结果不成功」需将验证码复位到初始状态，方便用户重试。
+     *
+     * 约定：承载本验证码的表单在提交失败时应派发自定义事件 `xf.form.error`
+     * （xfadmin 的 data-xf-remote 表单在响应非成功时即派发此事件，bubbles 冒泡至 document）。
+     * 此处统一监听该事件，仅当出错表单内确实包含本验证码组件时才复位，避免误伤。
+     * 非 AJAX（原生表单提交整页刷新）场景下验证码会随页面重新渲染而天然复位，无需处理。
+     */
+    document.addEventListener('xf.form.error', function (e) {
+        var form = e.target;
+        if (!form || typeof form.querySelector !== 'function') return;
+        if (!form.querySelector('.xf-captcha')) return;
+        try {
+            if (typeof xfCaptcha.reset === 'function') xfCaptcha.reset();
+        } catch (err) {
+            /* 复位失败不应阻断页面其他逻辑 */
+        }
+    });
+
     // AMD 支持
     if (typeof define === "function" && define.amd) {
         define("xfCaptcha", [], function () {
