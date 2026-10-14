@@ -3,7 +3,7 @@
  *
  * @package     zxf/captcha
  * @license     MIT
- * @version     1.0.6
+ * @version     1.0.9
  */
 (function (window, document) {
     "use strict";
@@ -167,6 +167,12 @@
         _modalBg: null,
         _img: null,
 
+        // 预生成的滑块图层（仅在图片加载时计算一次边缘效果，避免拖拽时逐帧重算）
+        _slidePrepared: null,
+
+        // 当前是否展示弹窗（用于 Esc 关闭与键盘交互判断）
+        _isOpen: false,
+
         // 状态标记
         _imgLoaded: false,
         _isDrawBg: false,
@@ -200,6 +206,10 @@
         _onSuccess: null,
         _onFail: null,
         _onClose: null,
+        _onShow: null,
+        _onHide: null,
+        _onRefresh: null,
+        _onReset: null,
 
         // 配置选项
         _options: {},
@@ -253,6 +263,50 @@
         },
 
         /**
+         * 带缓存的 DOM 元素查询（性能优化）
+         *
+         * 验证码弹窗的 DOM 结构在一次 init 内稳定不变，重复 document.querySelector
+         * 既无必要也浪费时间。本方法首次查询后缓存结果，并在元素脱离文档时自动重新查询，
+         * 兼顾性能与 re-init 后的正确性。
+         *
+         * @param {string} sel CSS 选择器
+         * @param {string} key 缓存键（挂载在 xfCaptcha 上的属性名）
+         * @returns {Element|null}
+         */
+        _el(sel, key) {
+            let el = xfCaptcha[key];
+            if (!el || !el.isConnected) {
+                el = xfCaptcha[key] = document.querySelector(sel);
+            }
+            return el;
+        },
+
+        /**
+         * 仅在拖动进行中把 mousemove/mouseup/touchmove/touchend 绑定到 document，
+         * 避免全局常驻监听在页面任意移动鼠标时都被触发（性能优化）。
+         */
+        _bindDragListeners() {
+            if (xfCaptcha._dragListenersBound) return;
+            xfCaptcha._dragListenersBound = true;
+            xfCaptcha._bind(document, "mousemove", xfCaptcha._blockOnMove, { passive: false });
+            xfCaptcha._bind(document, "mouseup", xfCaptcha._blockOnEnd, { passive: false });
+            xfCaptcha._bind(document, "touchmove", xfCaptcha._blockOnMove, { passive: false });
+            xfCaptcha._bind(document, "touchend", xfCaptcha._blockOnEnd, { passive: false });
+        },
+
+        /**
+         * 拖动结束后解绑 document 上的拖动相关监听，避免长期持有全局事件监听。
+         */
+        _unbindDragListeners() {
+            if (!xfCaptcha._dragListenersBound) return;
+            xfCaptcha._dragListenersBound = false;
+            document.removeEventListener("mousemove", xfCaptcha._blockOnMove);
+            document.removeEventListener("mouseup", xfCaptcha._blockOnEnd);
+            document.removeEventListener("touchmove", xfCaptcha._blockOnMove);
+            document.removeEventListener("touchend", xfCaptcha._blockOnEnd);
+        },
+
+        /**
          * 滑块开始拖动
          *
          * @param {Event} e 事件对象
@@ -276,8 +330,11 @@
             // 记录起始时刻用于轨迹时间戳（首点 t=0 基准）
             xfCaptcha._trackStartTime = Date.now();
 
+            // 仅在拖动进行中绑定全局监听，结束后解绑（避免常驻全局事件影响页面性能）
+            xfCaptcha._bindDragListeners();
+
             // 添加拖动状态样式
-            const block = document.querySelector(".captcha_slide_block");
+            const block = xfCaptcha._el(".captcha_slide_block", "_blockEl");
             if (block) addClass(block, "dragging");
         },
 
@@ -326,7 +383,7 @@
 
             xfCaptcha._rafId = requestAnimationFrame(() => {
                 // 更新滑块位置
-                const block = document.querySelector(".captcha_slide_block");
+                const block = xfCaptcha._el(".captcha_slide_block", "_blockEl");
                 if (block) {
                     block.style.transform = "translateX(" + offset + "px)";
                 }
@@ -352,11 +409,96 @@
             xfCaptcha._isMoving = false;
 
             // 移除拖动状态样式
-            const block = document.querySelector(".captcha_slide_block");
+            const block = xfCaptcha._el(".captcha_slide_block", "_blockEl");
             if (block) removeClass(block, "dragging");
+
+            // 解绑拖动期间的全局监听，恢复为“无监听”状态
+            xfCaptcha._unbindDragListeners();
 
             // 发送验证请求
             xfCaptcha._sendResult();
+        },
+
+        /**
+         * 滑块键盘交互（无障碍）
+         *
+         * 为可聚焦的滑块（role="slider" tabindex="0"）提供键盘操作：
+         * - 左右方向键（按住 Shift 步长加大）移动滑块
+         * - Home / End 直接跳到最左 / 最右
+         * - 松开按键（keyup）时提交验证（支持长按连续移动后只提交一次）
+         *
+         * @param {KeyboardEvent} e 键盘事件
+         */
+        _blockOnKey(e) {
+            if (xfCaptcha._captchaType !== 'slide') return;
+            if (!xfCaptcha._imgLoaded || xfCaptcha._doing) return;
+
+            const step = e.shiftKey ? 12 : 4;
+            let offset = xfCaptcha._markOffset;
+            let handled = true;
+
+            switch (e.key) {
+                case 'ArrowLeft':
+                case 'Left':
+                    offset -= step;
+                    break;
+                case 'ArrowRight':
+                case 'Right':
+                    offset += step;
+                    break;
+                case 'Home':
+                    offset = 0;
+                    break;
+                case 'End':
+                    offset = xfCaptcha._imgWidth - xfCaptcha._markWidth;
+                    break;
+                default:
+                    handled = false;
+            }
+
+            if (!handled) return;
+            e.preventDefault();
+
+            // 限制滑动范围（CSS 像素）
+            const maxOffset = (xfCaptcha._imgWidth - xfCaptcha._markWidth) * (xfCaptcha._imgScale || 1);
+            offset = Math.max(0, Math.min(offset, maxOffset));
+            xfCaptcha._markOffset = offset;
+
+            const block = xfCaptcha._el(".captcha_slide_block", "_blockEl");
+            if (block) {
+                block.style.transform = "translateX(" + offset + "px)";
+                // 同步 ARIA 当前值（百分比口径，与 aria-valuemin/max=0/100 对齐）
+                const pct = maxOffset > 0 ? Math.round(offset / maxOffset * 100) : 0;
+                block.setAttribute('aria-valuenow', String(pct));
+            }
+
+            // 拖拽不再逐帧重算，直接复用预生成图层
+            xfCaptcha._drawMark();
+
+            // 初始化键盘轨迹记录（仅供后端基础轨迹校验，不阻断提交）
+            if (!xfCaptcha._trackStartTime) {
+                xfCaptcha._trackStartTime = Date.now();
+                xfCaptcha._slideTrack = [];
+            }
+            xfCaptcha._slideTrack.push({
+                x: Math.round(offset * (xfCaptcha._imgInvScale || 1)),
+                y: Math.round(xfCaptcha._markTopY || 0),
+                t: Date.now() - xfCaptcha._trackStartTime,
+            });
+
+            // 键盘抬起时提交验证（支持长按连续移动后只提交一次）
+            if (!xfCaptcha._keyUpHandler) {
+                const handler = function () {
+                    // 自移除监听，避免隐藏/重置后仍残留全局 keyup 监听导致重复提交
+                    document.removeEventListener("keyup", handler);
+                    xfCaptcha._keyUpHandler = null;
+                    if (xfCaptcha._doing || xfCaptcha._captchaType !== 'slide') return;
+                    xfCaptcha._doing = true;
+                    xfCaptcha._sendResult();
+                };
+                xfCaptcha._keyUpHandler = handler;
+                document.addEventListener("keyup", handler);
+            }
         },
 
         /**
@@ -372,7 +514,7 @@
                 e.preventDefault();
             }
 
-            const canvas = document.querySelector(".captcha_canvas_bg");
+            const canvas = xfCaptcha._el(".captcha_canvas_bg", "_bgCanvas");
             if (!canvas) return;
 
             const rect = canvas.getBoundingClientRect();
@@ -874,7 +1016,7 @@
          * 绘制完整背景
          */
         _drawFullBg() {
-            const canvas = document.querySelector(".captcha_canvas_bg");
+            const canvas = xfCaptcha._el(".captcha_canvas_bg", "_bgCanvas");
             if (!canvas) return;
 
             const ctx = canvas.getContext("2d");
@@ -907,7 +1049,7 @@
 
             xfCaptcha._isDrawBg = true;
 
-            const canvas = document.querySelector(".captcha_canvas_bg");
+            const canvas = xfCaptcha._el(".captcha_canvas_bg", "_bgCanvas");
             if (!canvas) return;
 
             const ctx = canvas.getContext("2d");
@@ -926,17 +1068,19 @@
 
         /**
          * 绘制滑块（仅滑动验证码）
+         *
+         * 性能优化：直接绘制预生成的滑块图层（_slidePrepared），
+         * 不再在每次拖拽帧中做 getImageData 逐像素边缘处理。
          */
         _drawMark() {
             if (xfCaptcha._captchaType !== 'slide') return;
 
-            const canvas = document.querySelector(".captcha_canvas_mark");
+            const canvas = xfCaptcha._el(".captcha_canvas_mark", "_markCanvas");
             if (!canvas) return;
 
             const ctx = canvas.getContext("2d", { willReadFrequently: true });
             ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-            // 计算实际可绘制的宽度（防止超出画布边界）
             // 将 CSS 空间偏移换算为图片空间偏移，保证滑块与缺口对齐
             const drawOffset = xfCaptcha._markOffset * (xfCaptcha._imgInvScale || 1);
             const availableWidth = canvas.width - drawOffset;
@@ -944,116 +1088,94 @@
 
             if (drawWidth <= 0) return;
 
-            // 创建临时画布处理边缘效果
-            const tempCanvas = document.createElement("canvas");
-            tempCanvas.width = xfCaptcha._markWidth;
-            tempCanvas.height = xfCaptcha._imgHeight;
-            const tempCtx = tempCanvas.getContext("2d", { willReadFrequently: true });
+            if (xfCaptcha._slidePrepared) {
+                ctx.drawImage(
+                    xfCaptcha._slidePrepared,
+                    0, 0, drawWidth, xfCaptcha._imgHeight,
+                    drawOffset, 0, drawWidth, xfCaptcha._imgHeight
+                );
+            } else if (xfCaptcha._img) {
+                // 兜底：预生成失败时使用原始滑块面板（边缘效果略差，但功能正常）
+                ctx.drawImage(
+                    xfCaptcha._img,
+                    0, xfCaptcha._imgHeight, drawWidth, xfCaptcha._imgHeight,
+                    drawOffset, 0, drawWidth, xfCaptcha._imgHeight
+                );
+            }
+        },
 
-            // 在临时画布绘制滑块图片
-            tempCtx.drawImage(
-                xfCaptcha._img,
-                0,
-                xfCaptcha._imgHeight,
-                xfCaptcha._markWidth,
-                xfCaptcha._imgHeight,
-                0,
-                0,
-                xfCaptcha._markWidth,
-                xfCaptcha._imgHeight
-            );
+        /**
+         * 预生成滑块图层（仅在图片加载时计算一次）
+         *
+         * 将合成图的“滑块面板”（第 2 行，y = imgHeight）抠出并做边缘透明/渐变处理，
+         * 之后拖拽过程中只需 drawImage，无需逐帧 getImageData 像素遍历，性能大幅提升。
+         */
+        _prepareSlideImage() {
+            if (xfCaptcha._captchaType !== 'slide' || !xfCaptcha._img) return;
 
-            // 添加边缘效果
+            const w = xfCaptcha._markWidth;
+            const h = xfCaptcha._imgHeight;
+            const temp = document.createElement("canvas");
+            temp.width = w;
+            temp.height = h;
+            const tctx = temp.getContext("2d", { willReadFrequently: true });
+
+            // 从合成图第 2 行抠出滑块面板
+            tctx.drawImage(xfCaptcha._img, 0, h, w, h, 0, 0, w, h);
+
             try {
-                const imageData = tempCtx.getImageData(0, 0, xfCaptcha._markWidth, xfCaptcha._imgHeight);
+                const imageData = tctx.getImageData(0, 0, w, h);
                 const data = imageData.data;
-                const width = xfCaptcha._markWidth;
-                const height = xfCaptcha._imgHeight;
 
-                // 边缘检测和透明化处理
-                for (let y = 0; y < height; y++) {
-                    // 从左向右扫描，找到左边缘
+                for (let y = 0; y < h; y++) {
                     let leftEdge = -1;
-                    for (let x = 0; x < width; x++) {
-                        const i = (y * width + x) * 4;
-                        const r = data[i];
-                        const g = data[i + 1];
-                        const b = data[i + 2];
-
-                        // 检查是否为非透明像素（亮度阈值）
-                        if (r + g + b >= 160) {
-                            leftEdge = x;
-                            break;
-                        }
+                    for (let x = 0; x < w; x++) {
+                        const i = (y * w + x) * 4;
+                        if (data[i] + data[i + 1] + data[i + 2] >= 160) { leftEdge = x; break; }
                     }
 
-                    // 从右向左扫描，找到右边缘
                     let rightEdge = -1;
-                    for (let x = width - 1; x >= 0; x--) {
-                        const i = (y * width + x) * 4;
-                        const r = data[i];
-                        const g = data[i + 1];
-                        const b = data[i + 2];
-
-                        if (r + g + b >= 160) {
-                            rightEdge = x;
-                            break;
-                        }
+                    for (let x = w - 1; x >= 0; x--) {
+                        const i = (y * w + x) * 4;
+                        if (data[i] + data[i + 1] + data[i + 2] >= 160) { rightEdge = x; break; }
                     }
 
-                    // 处理边缘渐变效果
                     const steps = 2;
-
-                    // 左边缘渐变（向外）
                     if (leftEdge >= 0) {
                         for (let s = 1; s <= steps; s++) {
                             const targetX = leftEdge - s;
                             if (targetX >= 0) {
-                                const idx = (y * width + targetX) * 4;
+                                const idx = (y * w + targetX) * 4;
                                 const alpha = Math.floor(80 - (80 / steps) * s);
-                                if (data[idx + 3] < alpha) {
-                                    data[idx + 3] = alpha;
-                                }
+                                if (data[idx + 3] < alpha) data[idx + 3] = alpha;
                             }
                         }
                     }
-
-                    // 右边缘渐变（向外）
                     if (rightEdge >= 0) {
                         for (let s = 1; s <= steps; s++) {
                             const targetX = rightEdge + s;
-                            if (targetX < width) {
-                                const idx = (y * width + targetX) * 4;
+                            if (targetX < w) {
+                                const idx = (y * w + targetX) * 4;
                                 const alpha = Math.floor(80 - (80 / steps) * s);
-                                if (data[idx + 3] < alpha) {
-                                    data[idx + 3] = alpha;
-                                }
+                                if (data[idx + 3] < alpha) data[idx + 3] = alpha;
                             }
                         }
                     }
 
                     // 透明化处理（亮度低于阈值的像素）
-                    for (let x = 0; x < width; x++) {
-                        const i = (y * width + x) * 4;
-                        const r = data[i];
-                        const g = data[i + 1];
-                        const b = data[i + 2];
-
-                        if (r + g + b < 60) {
-                            data[i + 3] = 0;
-                        }
+                    for (let x = 0; x < w; x++) {
+                        const i = (y * w + x) * 4;
+                        if (data[i] + data[i + 1] + data[i + 2] < 60) data[i + 3] = 0;
                     }
                 }
 
-                tempCtx.putImageData(imageData, 0, 0);
-                
-                // 将处理后的图片绘制到主画布
-                ctx.drawImage(tempCanvas, 0, 0, drawWidth, xfCaptcha._imgHeight, drawOffset, 0, drawWidth, xfCaptcha._imgHeight);
+                tctx.putImageData(imageData, 0, 0);
             } catch (e) {
-                // 如果图像处理失败，直接绘制原始图片
-                ctx.drawImage(tempCanvas, 0, 0, drawWidth, xfCaptcha._imgHeight, drawOffset, 0, drawWidth, xfCaptcha._imgHeight);
-                console.warn("xfCaptcha: 边缘效果处理失败", e);
+                // 读取失败则保留原始抠图（仍可用，只是边缘效果略差）
+                console.warn("xfCaptcha: 滑块图层边缘处理失败", e);
             }
+
+            xfCaptcha._slidePrepared = temp;
         },
 
         /**
@@ -1071,7 +1193,7 @@
                 xfCaptcha._drawBg();
                 xfCaptcha._drawMark();
 
-                const block = document.querySelector(".captcha_slide_block");
+                const block = xfCaptcha._el(".captcha_slide_block", "_blockEl");
                 if (block) block.style.transform = "translateX(0px)";
             }
         },
@@ -1093,6 +1215,12 @@
             if (xfCaptcha._rafId) {
                 cancelAnimationFrame(xfCaptcha._rafId);
                 xfCaptcha._rafId = null;
+            }
+
+            // 清理可能残留的键盘提交监听，避免上一轮未松手的 keyup 影响新一轮验证
+            if (xfCaptcha._keyUpHandler) {
+                document.removeEventListener("keyup", xfCaptcha._keyUpHandler);
+                xfCaptcha._keyUpHandler = null;
             }
 
             if (xfCaptcha._successHideTimer) {
@@ -1126,10 +1254,54 @@
             const modal = document.getElementById("captcha_div");
             if (bg) bg.style.display = "block";
             if (modal) modal.style.display = "block";
+
+            // 无障碍 / 体验增强：锁定背景滚动并聚焦弹窗
+            xfCaptcha._lockBodyScroll(true);
+            xfCaptcha._isOpen = true;
+            if (modal) {
+                try { modal.focus(); } catch (e) { /* 某些环境不支持 */ }
+            }
+
+            // 触发 onShow 回调
+            if (typeof xfCaptcha._onShow === "function") {
+                xfCaptcha._onShow();
+            }
+        },
+
+        /**
+         * 锁定 / 解锁背景滚动（弹窗打开时防止背景穿透滚动）
+         *
+         * @param {boolean} lock 是否锁定
+         */
+        _lockBodyScroll(lock) {
+            try {
+                if (lock) {
+                    if (xfCaptcha._bodyOverflow === undefined) {
+                        xfCaptcha._bodyOverflow = document.body.style.overflow;
+                    }
+                    document.body.style.overflow = "hidden";
+                } else if (xfCaptcha._bodyOverflow !== undefined) {
+                    document.body.style.overflow = xfCaptcha._bodyOverflow;
+                    xfCaptcha._bodyOverflow = undefined;
+                }
+            } catch (e) { /* 忽略 */ }
+        },
+
+        /**
+         * 关闭按钮回调：先触发 onClose（用户主动关闭），再隐藏弹窗
+         */
+        _handleClose() {
+            if (typeof xfCaptcha._onClose === "function") {
+                xfCaptcha._onClose();
+            }
+            xfCaptcha.hide();
         },
 
         /**
          * 隐藏验证码弹窗
+         *
+         * 无论因何种原因隐藏（成功自动关闭、点击关闭、重置），都统一在此：
+         * 解除背景滚动锁定、标记弹窗已关闭，并触发 onHide 回调。
          */
         hide() {
             const bg = document.getElementById("captcha_div_bg");
@@ -1137,8 +1309,20 @@
             if (bg) bg.style.display = "none";
             if (modal) modal.style.display = "none";
 
-            if (typeof xfCaptcha._onClose === "function") {
-                xfCaptcha._onClose();
+            // 兜底：清理可能残留的拖动全局监听与键盘提交监听，避免隐藏后误触发
+            xfCaptcha._unbindDragListeners();
+            if (xfCaptcha._keyUpHandler) {
+                document.removeEventListener("keyup", xfCaptcha._keyUpHandler);
+                xfCaptcha._keyUpHandler = null;
+            }
+
+            // 无障碍 / 体验收尾：恢复背景滚动并标记弹窗已关闭
+            xfCaptcha._isOpen = false;
+            xfCaptcha._lockBodyScroll(false);
+
+            // 触发 onHide 回调（任意原因导致弹窗隐藏都会触发）
+            if (typeof xfCaptcha._onHide === "function") {
+                xfCaptcha._onHide();
             }
         },
 
@@ -1206,22 +1390,22 @@
 
             const html = `
                 <div class="captcha_div_bg" id="captcha_div_bg"></div>
-                <div class="captcha_div" id="captcha_div">
+                <div class="captcha_div" id="captcha_div" role="dialog" aria-modal="true" aria-label="人机验证" tabindex="-1">
                     <div class="captcha_loading"></div>
-                    <canvas class="captcha_canvas_bg" width="240" height="150"></canvas>
+                    <canvas class="captcha_canvas_bg" width="240" height="150" aria-label="验证码图片"></canvas>
                     <canvas class="captcha_canvas_mark" width="240" height="150"></canvas>
                     <div class="captcha_hlight"></div>
-                    <div class="captcha_msg_error"></div>
-                    <div class="captcha_msg_ok"></div>
+                    <div class="captcha_msg_error" role="alert"></div>
+                    <div class="captcha_msg_ok" role="status"></div>
                     <div class="captcha_slide">
-                        <div class="captcha_slide_block"></div>
+                        <div class="captcha_slide_block" tabindex="0" role="slider" aria-label="拖动滑块完成拼图" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></div>
                         <div class="captcha_slide_text">${xfCaptcha._options.slideText}</div>
                     </div>
                     <div class="captcha_tools">
                         <a href="http://yoc.cn" target="_blank" class="captcha_copyright" title="来源 yoc.cn">© yoc.cn</a>
                         <div class="captcha_tools_actions">
-                            ${xfCaptcha._options.showRefresh ? '<div class="captcha_refresh" title="刷新"></div>' : ''}
-                            ${xfCaptcha._options.showClose ? '<div class="captcha_close" title="关闭"></div>' : ''}
+                            ${xfCaptcha._options.showRefresh ? '<div class="captcha_refresh" role="button" tabindex="0" title="刷新" aria-label="刷新验证码"></div>' : ''}
+                            ${xfCaptcha._options.showClose ? '<div class="captcha_close" role="button" tabindex="0" title="关闭" aria-label="关闭"></div>' : ''}
                         </div>
                     </div>
                 </div>
@@ -1241,6 +1425,7 @@
             xfCaptcha._isDrawBg = false;
             xfCaptcha._result = false;
             xfCaptcha._imgLoaded = false;
+            xfCaptcha._slidePrepared = null;
             // 重置滑块位移/缺口纵坐标，避免上一次失败拖拽的残留偏移
             // 使新验证码的滑块标记停留在错误位置
             xfCaptcha._markOffset = 0;
@@ -1295,13 +1480,18 @@
                                 if (data.type === 'slide') {
                                     xfCaptcha._markWidth = data.mark_width || 50;
                                     xfCaptcha._markHeight = data.mark_height || 50;
-                                    // 记录缺口初始位置（图片像素），用于轨迹纵坐标基准
+                                    // 记录缺口初始位置（图片像素），仅用于轨迹纵坐标基准；
+                                    // 横坐标（正确偏移量答案）绝不接收，否则机器人可直接绕过拼图
                                     xfCaptcha._markTopY = typeof data.pos_y === 'number' ? data.pos_y : 0;
-                                    xfCaptcha._posX = typeof data.pos_x === 'number' ? data.pos_x : 0;
                                 }
 
                                 // 更新 UI 前先清理
                                 xfCaptcha._updateUIForType(data.type);
+
+                                // 触发 onRefresh 回调（新验证码数据已就绪，可携带当前类型与是否强制切换）
+                                if (typeof xfCaptcha._onRefresh === "function") {
+                                    xfCaptcha._onRefresh(data.type, switchType === true);
+                                }
 
                                 // 更新提示文字
                                 const slideText = document.querySelector(".captcha_slide_text");
@@ -1333,6 +1523,8 @@
                                     const markCtx = markCanvas.getContext("2d");
                                     markCtx.clearRect(0, 0, markCanvas.width, markCanvas.height);
                                     xfCaptcha._imgLoaded = true;
+                                    // 图片加载完成后预生成滑块图层（仅一次，供拖拽时直接使用）
+                                    xfCaptcha._prepareSlideImage();
                                     if (loading) {
                                         loading.style.display = "none";
                                         loading.innerHTML = "";
@@ -1440,22 +1632,29 @@
 
             xfCaptcha._createHTML();
 
-            const modal = document.getElementById("captcha_div");
-            if (modal && xfCaptcha._options.theme && xfCaptcha._options.theme !== 'auto') {
-                modal.setAttribute('data-theme', xfCaptcha._options.theme);
+            // 应用主题：显式 light/dark 同时写到 <html> 上，避免被系统暗色媒体查询覆盖；auto 则不写，由媒体查询接管
+            const theme = xfCaptcha._options.theme || 'auto';
+            const root = document.documentElement;
+            if (theme === 'auto') {
+                root.removeAttribute('data-theme');
+            } else {
+                root.setAttribute('data-theme', theme);
             }
 
-            // 滑动验证码事件绑定
+            const modal = document.getElementById("captcha_div");
+            if (modal) {
+                modal.setAttribute('data-theme', theme);
+            }
+
+            // 滑动验证码事件绑定（mousedown/touchstart 负责在拖动开始时按需绑定 document 全局监听，
+            // 拖动结束即解绑，避免全局常驻 mousemove 监听拖慢整个页面）
             const block = document.querySelector(".captcha_slide_block");
             if (block) {
                 xfCaptcha._bind(block, "mousedown", xfCaptcha._blockStartMove, { passive: false });
                 xfCaptcha._bind(block, "touchstart", xfCaptcha._blockStartMove, { passive: false });
+                // 无障碍：键盘方向键 / Home / End 拖动滑块
+                xfCaptcha._bind(block, "keydown", xfCaptcha._blockOnKey, false);
             }
-
-            xfCaptcha._bind(document, "mousemove", xfCaptcha._blockOnMove, { passive: false });
-            xfCaptcha._bind(document, "mouseup", xfCaptcha._blockOnEnd, { passive: false });
-            xfCaptcha._bind(document, "touchmove", xfCaptcha._blockOnMove, { passive: false });
-            xfCaptcha._bind(document, "touchend", xfCaptcha._blockOnEnd, { passive: false });
 
             // 点击验证码事件绑定
             const bgCanvas = document.querySelector(".captcha_canvas_bg");
@@ -1466,7 +1665,8 @@
 
             const closeBtn = document.querySelector(".captcha_close");
             if (closeBtn) {
-                xfCaptcha._bind(closeBtn, "click", xfCaptcha.hide);
+                // 关闭按钮：先触发 onClose（用户主动关闭）再隐藏弹窗（hide 内部触发 onHide）
+                xfCaptcha._bind(closeBtn, "click", xfCaptcha._handleClose);
             }
 
             const refreshBtn = document.querySelector(".captcha_refresh");
@@ -1532,12 +1732,69 @@
         },
 
         /**
+         * 设置弹窗打开回调
+         *
+         * @param {function} fn 回调函数
+         * @returns {object} xfCaptcha 对象
+         */
+        onShow(fn) {
+            xfCaptcha._onShow = fn;
+            return xfCaptcha;
+        },
+
+        /**
+         * 设置弹窗关闭回调
+         *
+         * @param {function} fn 回调函数
+         * @returns {object} xfCaptcha 对象
+         */
+        onHide(fn) {
+            xfCaptcha._onHide = fn;
+            return xfCaptcha;
+        },
+
+        /**
+         * 设置刷新回调
+         *
+         * @param {function} fn 回调函数
+         * @returns {object} xfCaptcha 对象
+         */
+        onRefresh(fn) {
+            xfCaptcha._onRefresh = fn;
+            return xfCaptcha;
+        },
+
+        /**
+         * 设置重置回调
+         *
+         * @param {function} fn 回调函数
+         * @returns {object} xfCaptcha 对象
+         */
+        onReset(fn) {
+            xfCaptcha._onReset = fn;
+            return xfCaptcha;
+        },
+
+        /**
          * 获取验证令牌（双重验证模式）
          *
          * @returns {string|null}
          */
         getToken() {
             return xfCaptcha._getToken();
+        },
+
+        /**
+         * 获取用户点击坐标（点击验证码）
+         *
+         * 每个元素为 {x, y, t}，x/y 为图片像素坐标，t 为相对首点的耗时（毫秒）。
+         * 双重验证模式下前端已上报并通过，这里返回空数组即可；
+         * 纯后端模式如需在表单提交时附带坐标可调用本方法。
+         *
+         * @returns {Array}
+         */
+        getClickPoints() {
+            return xfCaptcha._clickPoints || [];
         },
 
         /**
@@ -1548,9 +1805,15 @@
          */
         setTheme(theme) {
             xfCaptcha._options.theme = theme || 'auto';
+            const root = document.documentElement;
+            if (xfCaptcha._options.theme === 'auto') {
+                root.removeAttribute('data-theme');
+            } else {
+                root.setAttribute('data-theme', xfCaptcha._options.theme);
+            }
             const modal = document.getElementById("captcha_div");
             if (modal) {
-                modal.setAttribute('data-theme', theme);
+                modal.setAttribute('data-theme', xfCaptcha._options.theme);
             }
             return xfCaptcha;
         },
@@ -1567,6 +1830,12 @@
             if (xfCaptcha._rafId) {
                 cancelAnimationFrame(xfCaptcha._rafId);
                 xfCaptcha._rafId = null;
+            }
+
+            // 清理可能残留的键盘提交监听，避免上一轮未松手的 keyup 影响新一轮验证
+            if (xfCaptcha._keyUpHandler) {
+                document.removeEventListener("keyup", xfCaptcha._keyUpHandler);
+                xfCaptcha._keyUpHandler = null;
             }
             if (xfCaptcha._successHideTimer) {
                 clearTimeout(xfCaptcha._successHideTimer);
@@ -1600,6 +1869,11 @@
             });
 
             xfCaptcha.refresh();
+
+            // 触发 onReset 回调（验证码已复位到初始可验证状态）
+            if (typeof xfCaptcha._onReset === "function") {
+                xfCaptcha._onReset();
+            }
 
             return xfCaptcha;
         },

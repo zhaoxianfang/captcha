@@ -798,4 +798,200 @@ class CaptchaTest extends TestCase
         $this->assertTrue($result['success'], '空字符串 token 应视为未携带');
         $this->assertNotEmpty($result['token'], 'dual 模式应返回新 token');
     }
+
+    /**
+     * 安全回归：滑动验证码绝不可把正确偏移量答案 pos_x 泄露给前端
+     *
+     * 正确偏移量仅存于服务端 Session（xf_captcha_r），前端只能拿到缺口纵坐标 pos_y。
+     * 若返回 pos_x，机器人可直接令 captcha_r = pos_x 绕过拼图。
+     */
+    public function testSlideDataDoesNotExposeAnswerX(): void
+    {
+        $captcha = new Captcha([
+            'captcha_type' => Captcha::TYPE_SLIDE,
+            'slide'        => ['track_verify' => false],
+        ]);
+
+        try {
+            $data = $captcha->makeData();
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('背景图片', $e->getMessage());
+            return;
+        }
+
+        $this->assertArrayHasKey('pos_y', $data, '应返回缺口纵坐标');
+        $this->assertArrayNotHasKey('pos_x', $data, '绝不能把正确偏移量答案 pos_x 返回前端（防绕过拼图）');
+
+        // 正确答案确实已安全存放在服务端 Session
+        $session = $this->getMockSession($captcha);
+        $this->assertNotNull($session['xf_captcha_r'] ?? null, '正确偏移量应仅存于服务端 Session');
+    }
+
+    /**
+     * 配置回归：security.fingerprint_check 默认开启且可显式关闭
+     */
+    public function testFingerprintCheckConfigDefaultAndOverride(): void
+    {
+        $defaultCaptcha = new Captcha();
+        $this->assertTrue(
+            $defaultCaptcha->getConfig('security.fingerprint_check'),
+            'fingerprint_check 默认应开启'
+        );
+
+        $disabledCaptcha = new Captcha(['security' => ['fingerprint_check' => false]]);
+        $this->assertFalse(
+            $disabledCaptcha->getConfig('security.fingerprint_check'),
+            '可显式关闭指纹校验'
+        );
+    }
+
+    /**
+     * 事件系统：实例级 on() 监听器能收到 generated 事件
+     */
+    public function testOnGeneratedEventFires(): void
+    {
+        $captcha = new Captcha([
+            'captcha_type' => Captcha::TYPE_SLIDE,
+            'slide'        => ['track_verify' => false],
+        ]);
+
+        $captured = null;
+        $captcha->on('generated', function ($event, $context) use (&$captured) {
+            $captured = $context;
+        });
+
+        try {
+            $captcha->makeData();
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('背景图片', $e->getMessage());
+            return;
+        }
+
+        $this->assertNotNull($captured, 'generated 事件应被触发');
+        $this->assertEquals(Captcha::TYPE_SLIDE, $captured['type'] ?? null, '事件上下文应携带类型');
+    }
+
+    /**
+     * 事件系统：验证成功时触发 verify_success 事件
+     */
+    public function testOnVerifySuccessEventFires(): void
+    {
+        $captcha = new Captcha([
+            'captcha_type' => Captcha::TYPE_SLIDE,
+            'verify_mode'  => Captcha::VERIFY_BACKEND_ONLY,
+            'slide'        => ['track_verify' => false],
+        ]);
+
+        $events = [];
+        $captcha->on('verify_success', function ($event, $context) use (&$events) {
+            $events[] = $context;
+        });
+
+        try {
+            $captcha->makeData();
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('背景图片', $e->getMessage());
+            return;
+        }
+
+        $session = $this->getMockSession($captcha);
+        $posX = (int) ($session['xf_captcha_r'] ?? null);
+        $captcha->verify($posX);
+
+        $this->assertNotEmpty($events, 'verify_success 事件应被触发');
+        $this->assertEquals(Captcha::VERIFY_BACKEND_ONLY, $events[0]['mode'] ?? null);
+    }
+
+    /**
+     * 事件系统：全局静态分发器可跨实例接收事件，且可清除
+     */
+    public function testGlobalEventDispatcher(): void
+    {
+        $log = [];
+        Captcha::setEventDispatcher(function ($event, $context) use (&$log) {
+            $log[] = ['event' => $event, 'context' => $context];
+        });
+
+        try {
+            $captcha = new Captcha([
+                'captcha_type' => Captcha::TYPE_SLIDE,
+                'slide'        => ['track_verify' => false],
+            ]);
+            $captcha->makeData();
+        } catch (\RuntimeException $e) {
+            Captcha::setEventDispatcher(null);
+            $this->assertStringContainsString('背景图片', $e->getMessage());
+            return;
+        } finally {
+            // 无论成功失败都清除全局分发器，避免污染其他测试
+            Captcha::setEventDispatcher(null);
+        }
+
+        $this->assertNotEmpty($log, '全局分发器应收到事件');
+        $this->assertEquals('generated', $log[0]['event']);
+    }
+
+    /**
+     * 事件系统：监听器抛出异常不影响验证码主流程
+     */
+    public function testEventListenerExceptionDoesNotBreakFlow(): void
+    {
+        $captcha = new Captcha([
+            'captcha_type' => Captcha::TYPE_SLIDE,
+            'verify_mode'  => Captcha::VERIFY_BACKEND_ONLY,
+            'slide'        => ['track_verify' => false],
+        ]);
+
+        // 监听器故意抛异常
+        $captcha->on('generated', function () {
+            throw new \RuntimeException('listener boom');
+        });
+
+        try {
+            $captcha->makeData();
+        } catch (\RuntimeException $e) {
+            // 若是“背景图片”缺失则说明环境无背景图，属正常跳过
+            if (str_contains($e->getMessage(), '背景图片')) {
+                $this->assertStringContainsString('背景图片', $e->getMessage());
+                return;
+            }
+            // 若是监听器异常冒泡则测试失败
+            $this->fail('监听器异常不应冒泡到主流程: ' . $e->getMessage());
+        }
+
+        // 能走到这里说明 makeData 在监听器异常下仍正常完成
+        $this->assertTrue(true);
+    }
+
+    /**
+     * 性能回归：背景图片列表应在“构造时不扫描”，直到首次生成图片时才懒加载并缓存。
+     *
+     * 该优化避免 verify() 等仅需读取会话的路径每次请求都执行 scandir / file_exists，
+     * 显著降低热点路径的系统调用开销。
+     */
+    public function testBackgroundImagesAreLazyLoaded(): void
+    {
+        $captcha = new Captcha();
+
+        // 构造后不应立即扫描目录（defaultBgImages 初始为 null 即证明未扫描）
+        $ref = new \ReflectionClass($captcha);
+        $prop = $ref->getProperty('defaultBgImages');
+        if (PHP_VERSION_ID < 80500) {
+            $prop->setAccessible(true);
+        }
+        $this->assertNull($prop->getValue($captcha), '构造后 defaultBgImages 应为 null（懒加载，未扫描目录）');
+
+        // 实际生成图片（包内自带背景图，应成功）后，列表被懒加载并缓存为非空数组
+        try {
+            $captcha->makeRaw();
+        } catch (\RuntimeException $e) {
+            // 环境无背景图时跳过后续断言（属正常跳过）
+            $this->assertStringContainsString('背景图片', $e->getMessage());
+            return;
+        }
+
+        $cached = $prop->getValue($captcha);
+        $this->assertIsArray($cached, '生成图片后列表应被缓存');
+        $this->assertNotEmpty($cached, '缓存的背景图片列表应非空');
+    }
 }

@@ -2,7 +2,7 @@
 
 [![PHP Version](https://img.shields.io/badge/php-%3E%3D8.2-8892BF.svg)](https://php.net/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.0.6-brightgreen.svg)]()
+[![Version](https://img.shields.io/badge/version-1.0.9-brightgreen.svg)]()
 
 高性能、安全、易用的滑动验证码 & 点击验证码 PHP 扩展包，支持 Laravel、ThinkPHP 等主流 PHP 框架，也可在原生 PHP 中使用。
 
@@ -258,7 +258,11 @@ document.addEventListener('DOMContentLoaded', function() {
 | `borderRadius` | string | — | 自定义触发按钮圆角（如 `4px`） |
 | `onSuccess` | string | — | 验证成功回调函数字符串，如 `function(token) { ... }` |
 | `onFail` | string | — | 验证失败回调函数字符串 |
-| `onClose` | string | — | 弹窗关闭回调函数字符串 |
+| `onClose` | string | — | 弹窗关闭（点击关闭按钮）回调函数字符串 |
+| `onShow` | string | — | 弹窗打开回调函数字符串 |
+| `onHide` | string | — | 弹窗隐藏（成功 / 关闭 / 重置）回调函数字符串 |
+| `onRefresh` | string | — | 刷新新验证码就绪回调函数字符串，签名为 `function(type, switched)` |
+| `onReset` | string | — | 验证码复位完成回调函数字符串 |
 | `attributes` | string | — | 额外的 HTML 属性字符串 |
 
 #### 4. 后端验证
@@ -728,7 +732,7 @@ xfCaptcha.hide();
 xfCaptcha.reset();
 ```
 
-### 事件回调
+### 前端生命周期回调
 
 ```javascript
 xfCaptcha.init({
@@ -743,10 +747,98 @@ xfCaptcha.init({
     // 验证失败后的处理
 })
 .onClose(function() {
-    console.log('验证码弹窗关闭');
-    // 弹窗关闭后的处理
+    console.log('用户主动关闭了验证码弹窗');
+})
+.onShow(function() {
+    console.log('验证码弹窗已打开');
+})
+.onHide(function() {
+    console.log('验证码弹窗已隐藏（成功自动关闭 / 主动关闭 / 重置 都会触发）');
+})
+.onRefresh(function(type, switched) {
+    console.log('已刷新验证码，新类型：', type, '是否强制切换类型：', switched);
+})
+.onReset(function() {
+    console.log('验证码已复位到初始可验证状态');
 });
 ```
+
+> 回调说明：
+> - `onShow`：弹窗打开时触发（含打开时锁定背景滚动、聚焦弹窗等无障碍处理）。
+> - `onHide`：弹窗隐藏时触发（成功自动关闭、主动关闭、调用 `reset()` 均会触发），与 `onClose`（仅点击关闭按钮）区分。
+> - `onRefresh`：新验证码数据就绪时触发，参数为 `(type, switched)`，便于在切换滑动/点击类型时更新自定义 UI。
+> - `onReset`：调用 `reset()` 完成复位后触发。
+
+### 后端安全事件（风控 / 审计）
+
+服务端在关键安全节点触发事件，支持「实例级 `on()`」与「全局静态 `setEventDispatcher()`」两种订阅方式，
+任一监听器异常均不影响验证码主流程。
+
+```php
+use zxf\Captcha\Captcha;
+
+// 方式一：实例级监听（针对单个验证码对象）
+$captcha = new Captcha([
+    'captcha_type' => Captcha::TYPE_SLIDE,
+    'verify_mode'  => Captcha::VERIFY_DUAL,
+]);
+$captcha->on('verify_success', function (string $event, array $context) {
+    // $context = ['type' => 'slide'|'click', 'mode' => 'backend_only'|'dual', 'stage' => 'primary'|'secondary']
+    audit_log('captcha_ok', $context);
+});
+$captcha->on('bot_detected', function (string $event, array $context) {
+    // $context = ['type' => ..., 'reason' => 'click_interval_too_short' | 'click_too_fast' | 'slide_...']
+    rate_limit_ip($context['reason']);
+});
+$captcha->makeData();
+
+// 方式二：全局静态分发器（框架集成层统一订阅，跨实例生效）
+Captcha::setEventDispatcher(function (string $event, array $context) {
+    // 写入统一审计日志 / 上报风控系统
+    app('audit')->info('captcha.event.' . $event, $context);
+});
+```
+
+| 事件名 | 触发时机 | context 关键字段 |
+| --- | --- | --- |
+| `generated` | 生成新验证码 | `type`, `refresh` |
+| `verify_success` | 验证通过 | `type`, `mode`, `stage`（dual 模式下区分 primary/secondary） |
+| `verify_failed` | 验证失败（未达上限） | `type`, `count` |
+| `bot_detected` | 机器人行为被拦截 | `type`, `reason` |
+| `max_attempts_exceeded` | 错误次数超限，已强制刷新 | `type`, `count` |
+| `rate_limited` | 触发速率限制 | `window`, `max_requests`, `count` |
+
+### 无障碍（A11y）
+
+- 弹窗为 `role="dialog" aria-modal="true"`，打开时锁定背景滚动并自动聚焦。
+- 滑块为 `role="slider" tabindex="0"`，支持键盘操作：`←/→`（按住 `Shift` 步长加大）移动、`Home`/`End` 跳到两端，松手即提交；并实时同步 `aria-valuenow`。
+- 关闭 / 刷新按钮为 `role="button" tabindex="0"`，错误 / 成功提示分别为 `role="alert"` / `role="status"`。
+- 支持浅色 / 深色主题，显式指定 `theme: 'light'` 时不会被系统暗色媒体查询覆盖。
+
+### 安全加固要点
+
+- **滑动答案不泄露**：正确偏移量答案（`pos_x`）仅存于服务端 Session，前端只接收缺口纵坐标 `pos_y`，机器人无法直接令 `captcha_r = pos_x` 绕过拼图。
+- **请求指纹绑定**：默认开启（`security.fingerprint_check`），前后端请求指纹一致才放行；特殊代理场景可显式关闭（需在配置中知悉风险）。
+- **双重验证 token 一次性**：`dual` 模式返回的 token 用过即毁，刷新验证码即作废旧 token。
+- **验证接口仅 POST**：防止 GET 触发 CSRF 与滥用。
+- **失败超限清答案**：错误次数超过 `max_error_count` 后清除答案数据，防止暴力穷举。
+- **机器人检测**：滑动轨迹（速度 / 纵向抖动 / 方差）与点击耗时（总耗时 / 连点间隔）双重检测。
+
+### 性能优化（资源占用与运行时间）
+
+本包在「正确性」之外持续压降运行时开销，重点优化发生在最频繁的路径（生成图片、验证、前端拖拽）：
+
+**后端（PHP / GD）**
+- **背景图目录扫描延迟到真正生成图片时**：构造与 `verify()` 不再在每次请求执行 `scandir` / `file_exists`，仅在 `makeData()` / `makeRaw()` 首次需要时才扫描并缓存（`getDefaultBgImages()` 懒加载），显著降低验证热路径的系统调用与运行时间。
+- **原始大图即用即释**：加载的背景原图完成缩放后立即 `imagedestroy`，不再持有到整轮生成结束；`merge()` 合并完成后立即释放三个中间图层（`imBg` / `imSlide` / `imScaledBg`），仅保留最终画布编码，降低图像生成阶段的峰值内存。
+- **系统字体路径进程内缓存**：`findSystemFont()` 命中后缓存结果，多次生成点击验证码不再重复扫描十几个字体路径。
+- **WebP 透明通道保留**：`imagealphablending` + `imagesavealpha` 同时作用于 WebP 与 PNG，避免透明区域被压成黑色，且 WebP 本身已是高压缩比格式。
+
+**前端（JavaScript / Canvas）**
+- **拖动监听“按需绑定”**：`mousemove` / `mouseup` / `touchmove` / `touchend` 仅在按下滑块（`mousedown` / `touchstart`）时才绑定到 `document`，拖动结束（`_blockOnEnd`）即解绑，避免全局常驻监听在页面任意移动鼠标时都被触发，拖拽过程 CPU 占用更低。
+- **DOM 元素查询缓存**：新增 `_el()` 带缓存的元素查询，滑动过程中不再每帧 `document.querySelector` 查找画布 / 滑块节点。
+- **滑块图层预生成**：首次加载图片时一次性抠出滑块图层（`_prepareSlideImage`），拖拽中仅 `drawImage`，避免逐帧 `getImageData` 像素遍历（此前已优化，本轮保留并加固）。
+- **键盘提交监听自清理**：无障碍键盘拖动提交的 `keyup` 监听在首次触发后自动 `removeEventListener`，关闭 / 重置时亦兜底清理，杜绝全局监听残留导致重复提交。
 
 ### 表单提交示例
 

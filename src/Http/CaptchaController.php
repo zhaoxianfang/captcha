@@ -153,7 +153,7 @@ class CaptchaController
             if ($result['type'] === Captcha::TYPE_SLIDE) {
                 $response['mark_width'] = $result['mark_width'];
                 $response['mark_height'] = $result['mark_height'];
-                $response['pos_x'] = $result['pos_x'];
+                // 仅返回缺口纵坐标：横坐标 pos_x 即“正确偏移量答案”，绝不返回，否则机器人可直接绕过拼图
                 $response['pos_y'] = $result['pos_y'];
             } else {
                 $response['char_count'] = $result['char_count'];

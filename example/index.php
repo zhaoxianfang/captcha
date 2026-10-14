@@ -240,6 +240,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 // 获取验证令牌（backend_only 模式下为 null，服务端按会话状态幂等放行）
                 const token = xfCaptcha.getToken() || '';
+                // 点击验证码：附带用户点击坐标（纯后端模式下二次校验可据此复核）
+                const clickPoints = xfCaptcha.getClickPoints();
 
                 // 发送验证请求到服务器
                 fetch('', {
@@ -248,6 +250,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         'Content-Type': 'application/x-www-form-urlencoded',
                     },
                     body: 'xf_captcha_token=' + encodeURIComponent(token)
+                        + '&click_points=' + encodeURIComponent(JSON.stringify(clickPoints))
                 })
                 .then(response => response.json())
                 .then(data => {
@@ -257,10 +260,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             xfCaptcha.reset();
                             document.getElementById('submit-btn').disabled = true;
                         }, 3000);
+                    } else {
+                        // 服务端复核失败：重置验证码，要求用户重新完成验证
+                        xfCaptcha.reset();
+                        document.getElementById('submit-btn').disabled = true;
                     }
                 })
                 .catch(error => {
                     showResult('请求失败: ' + error.message, false);
+                    xfCaptcha.reset();
+                    document.getElementById('submit-btn').disabled = true;
                 });
             });
 

@@ -136,6 +136,8 @@ if (!function_exists('xf_captcha_html')) {
 
         // 生成 JavaScript 配置
         $routePrefix = $config['route_prefix'] ?? 'xf_captcha';
+        // 生成合法且唯一的 HTML id（去掉选择器中的非法字符，避免 '.' 等出现在 id 中导致无效 HTML）
+        $elementId = 'xf-captcha-' . preg_replace('/[^a-zA-Z0-9_-]/', '-', $selector) . '-' . uniqid('', false);
         $jsConfig = json_encode([
             'handleDom' => $selector,
             'dataUrl' => $frontend['data_url'] ?? '/' . $routePrefix . '/data',
@@ -152,7 +154,7 @@ if (!function_exists('xf_captcha_html')) {
         ], JSON_UNESCAPED_UNICODE);
 
         return <<<HTML
-<div class="xf-captcha" id="xf-captcha-{$selector}"></div>
+<div class="xf-captcha" id="{$elementId}"></div>
 <link rel="stylesheet" href="/{$routePrefix}/css">
 <script src="/{$routePrefix}/js"></script>
 <script>

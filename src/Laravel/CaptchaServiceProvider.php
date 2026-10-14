@@ -100,8 +100,8 @@ class CaptchaServiceProvider extends ServiceProvider
             // 验证码图片（向后兼容）
             Route::get('/image', 'image')->name('xf-captcha.image');
 
-            // 验证接口
-            Route::match(['get', 'post'], '/check', 'check')->name('xf-captcha.check');
+            // 验证接口（仅 POST：验证会消费一次性令牌 / 计入错误次数，属状态变更，禁止 GET 防止 CSRF 与滥用）
+            Route::post('/check', 'check')->name('xf-captcha.check');
 
             // JS 文件
             Route::get('/js', 'js')->name('xf-captcha.js');

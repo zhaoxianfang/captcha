@@ -91,7 +91,7 @@ class CaptchaService extends Service
                 if ($result['type'] === Captcha::TYPE_SLIDE) {
                     $response['mark_width'] = $result['mark_width'];
                     $response['mark_height'] = $result['mark_height'];
-                    $response['pos_x'] = $result['pos_x'];
+                    // 仅返回缺口纵坐标：横坐标 pos_x 即“正确偏移量答案”，绝不返回，否则机器人可直接绕过拼图
                     $response['pos_y'] = $result['pos_y'];
                 } else {
                     $response['char_count'] = $result['char_count'];
@@ -118,11 +118,8 @@ class CaptchaService extends Service
             }
         });
 
-        // 验证接口
+        // 验证接口（仅 POST：验证会消费一次性令牌 / 计入错误次数，属状态变更，禁止 GET 防止 CSRF 与滥用）
         $route->post($prefix . '/check', function () {
-            return $this->handleCheck();
-        });
-        $route->get($prefix . '/check', function () {
             return $this->handleCheck();
         });
 

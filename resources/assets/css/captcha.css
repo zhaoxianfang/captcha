@@ -3,7 +3,7 @@
  *
  * @package     zxf/captcha
  * @license     MIT
- * @version     1.0.6
+ * @version     1.0.9
  */
 
 /* ============================================
@@ -88,6 +88,12 @@
 
 .xf-captcha:active {
     transform: translateY(0);
+}
+
+/* 无障碍：触发按钮键盘聚焦焦点环 */
+.xf-captcha:focus-visible {
+    outline: 2px solid #409eff;
+    outline-offset: 2px;
 }
 
 .xf-captcha.verified {
@@ -461,6 +467,13 @@
     transform: scale(1.05);
 }
 
+/* 无障碍：键盘聚焦滑块时显示清晰焦点环（role=slider tabindex=0） */
+.captcha_slide_block:focus-visible {
+    outline: 2px solid #1890ff;
+    outline-offset: 2px;
+    box-shadow: 0 8px 20px rgba(24, 144, 255, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+}
+
 /* 滑块提示文字 */
 .captcha_slide_text {
     position: absolute;
@@ -537,6 +550,14 @@
     background-size: 18px;
     transition: all 0.2s ease;
     border: 1px solid transparent;
+}
+
+/* 无障碍：工具栏按钮键盘聚焦焦点环 */
+.captcha_close:focus-visible,
+.captcha_refresh:focus-visible {
+    border-color: #1890ff;
+    box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.4);
+    outline: none;
 }
 
 /* 关闭按钮 */
@@ -734,6 +755,9 @@
    ============================================ */
 
 @media (prefers-color-scheme: dark) {
+    /* 关键：仅当用户未显式指定浅色（data-theme="light"）时才启用系统暗色。
+       显式 light 时 JS 已在 <html> 上写入 data-theme="light"，此选择器不匹配，
+       从而确保“浅色”选择不被系统暗色媒体查询覆盖（主题优先级：显式 > 系统自动）。 */
     :root:not([data-theme="light"]) {
         --xf-captcha-bg: #1a1a2e;
         --xf-captcha-text: #e0e0e0;

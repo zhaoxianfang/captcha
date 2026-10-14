@@ -248,9 +248,35 @@ class Captcha
     private array $mockSession = [];
 
     /**
-     * 默认背景图片路径
+     * 实例级事件监听器
+     *
+     * 用于在当前 Captcha 实例上挂载安全/生命周期回调，
+     * 例如记录“机器人轨迹被拦截”“超过最大错误次数”等事件。
+     *
+     * @var array<string, array<int, callable>>
      */
-    private array $defaultBgImages = [];
+    private array $eventListeners = [];
+
+    /**
+     * 全局事件分发器（跨实例）
+     *
+     * 供框架集成层（Laravel / ThinkPHP ServiceProvider）统一注册，
+     * 例如将安全事件写入日志、上报风控系统。所有实例触发的事件都会转发给它。
+     */
+    private static $globalDispatcher = null;
+
+    /**
+     * 默认背景图片列表（懒加载缓存）
+     *
+     * 初始为 null，首次需要时由 getDefaultBgImages() 扫描目录并缓存，
+     * 避免在仅做 verify() 验证的场景下无谓地 scandir 文件系统。
+     */
+    private ?array $defaultBgImages = null;
+
+    /**
+     * 已解析的系统字体路径缓存（同一进程内多次生成点击验证码时复用，避免重复扫描磁盘）
+     */
+    private static ?string $cachedSystemFont = null;
 
     /**
      * 构造函数
@@ -336,6 +362,14 @@ class Captcha
 
             // 验证模式
             'verify_mode' => self::VERIFY_DUAL,
+
+            // 安全配置
+            'security' => [
+                // 是否启用请求指纹校验（防止会话劫持重放）
+                // 关闭可避免移动网络切换 / 代理导致指纹变化而误杀真实用户，
+                // 但会略微降低会话安全性。生产环境建议保持开启。
+                'fingerprint_check' => true,
+            ],
 
             // Token过期时间（秒）
             'token_expire' => 300,
@@ -433,8 +467,8 @@ class Captcha
         // 修复图片路径
         $this->fixImagePaths();
 
-        // 设置默认背景图片
-        $this->defaultBgImages = $this->getBgImages();
+        // 注意：背景图片列表不再于构造时扫描（避免每次 verify 都 scandir 文件系统），
+        // 改为首次生成图片时由 getDefaultBgImages() 懒加载并缓存。
     }
 
     /**
@@ -588,6 +622,22 @@ class Captcha
     }
 
     /**
+     * 懒加载并缓存默认背景图片列表
+     *
+     * 仅在真正需要生成验证码图片时才扫描目录，避免 verify() 等仅需读取会话的场景
+     * 每次请求都执行 scandir / file_exists。结果在实例生命周期内缓存。
+     *
+     * @return array 背景图片路径数组
+     */
+    private function getDefaultBgImages(): array
+    {
+        if ($this->defaultBgImages === null) {
+            $this->defaultBgImages = $this->getBgImages();
+        }
+        return $this->defaultBgImages;
+    }
+
+    /**
      * 确保 Session 已启动
      */
     private function ensureSessionStarted(): void
@@ -688,6 +738,9 @@ class Captcha
         $this->captchaType = $this->getCaptchaType($refresh);
         $this->setSessionValue($this->sessionKeyType, $this->captchaType);
 
+        // 触发“验证码已生成”事件（供风控/审计记录）
+        $this->fireEvent('generated', ['type' => $this->captchaType, 'refresh' => $refresh]);
+
         return match ($this->captchaType) {
             self::TYPE_CLICK => $this->makeClickData($bgImages),
             default => $this->makeSlideData($bgImages),
@@ -723,9 +776,8 @@ class Captcha
                 'bg_height' => $this->bgHeight,
                 'mark_width' => $this->markWidth,
                 'mark_height' => $this->markHeight,
-                // 缺口/滑块位置（图片像素坐标）。缺口本就显示在背景图上，返回无安全风险；
-                // 前端用它作为滑动轨迹 y 轴基准与滑块初始 x 位置，使前后端坐标口径一致
-                'pos_x' => (int) $this->posX,
+                // 缺口纵坐标（图片像素）：前端用它作为滑动轨迹 y 轴基准与滑块初始 y 位置，使前后端坐标口径一致。
+                // 注意：缺口横坐标 pos_x（即正确偏移量答案）绝不返回给前端，否则机器人可直接令 captcha_r = pos_x 绕过拼图。
                 'pos_y' => (int) $this->posY,
                 'char_count' => 0,
                 'hint' => '拖动左边滑块完成上方拼图',
@@ -784,7 +836,7 @@ class Captcha
      */
     private function initClick(array $bgImages = []): void
     {
-        $images = !empty($bgImages) ? $bgImages : $this->defaultBgImages;
+        $images = !empty($bgImages) ? $bgImages : $this->getDefaultBgImages();
 
         if (empty($images)) {
             throw new RuntimeException('没有可用的背景图片，请配置背景图片');
@@ -816,6 +868,9 @@ class Captcha
             imagesx($this->imFullBg),
             imagesy($this->imFullBg)
         );
+
+        // 原始大图已完成缩放，立即释放，避免高分辩率原图长时间占用内存
+        $this->destroyImage($this->imFullBg);
 
         // 启用 alpha 混合，确保后续半透明文字背景遮罩能正确与背景图融合
         imagealphablending($this->imBg, true);
@@ -1077,8 +1132,15 @@ class Captcha
             }
 
             // 随机颜色（避免太浅或与背景相近的颜色）
-            if (!empty($fontColor) && count($fontColor) >= 3) {
-                $color = imagecolorallocate($this->imBg, $fontColor[0], $fontColor[1], $fontColor[2]);
+            if (!empty($fontColor) && count($fontColor) >= 3
+                && is_numeric($fontColor[0]) && is_numeric($fontColor[1]) && is_numeric($fontColor[2])) {
+                // 校验并约束到合法 RGB 范围，避免非数值配置导致 imagecolorallocate 返回无效颜色
+                $color = imagecolorallocate(
+                    $this->imBg,
+                    $this->filterInt($fontColor[0], 0, 255),
+                    $this->filterInt($fontColor[1], 0, 255),
+                    $this->filterInt($fontColor[2], 0, 255)
+                );
             } else {
                 $r = $this->secureRandomInt(30, 210);
                 $g = $this->secureRandomInt(30, 210);
@@ -1184,6 +1246,11 @@ class Captcha
      */
     private function findSystemFont(): string
     {
+        // 进程内已解析过则直接复用，避免每次生成点击验证码都扫描十几个字体路径
+        if (self::$cachedSystemFont !== null) {
+            return self::$cachedSystemFont;
+        }
+
         $possiblePaths = [
             // 包内字体（优先）
             dirname(__FILE__, 2) . '/resources/assets/font/custom.ttf',
@@ -1215,6 +1282,8 @@ class Captcha
 
         foreach ($possiblePaths as $path) {
             if (file_exists($path) && is_readable($path)) {
+                // 命中后缓存，后续复用（空结果不缓存，以便字体后续可用时重新探测）
+                self::$cachedSystemFont = $path;
                 return $path;
             }
         }
@@ -1240,8 +1309,8 @@ class Captcha
         ob_start();
         $func = 'image' . $format;
 
-        if ($format === 'png') {
-            // 保留可能存在的透明通道（如缺口/滑块区域）
+        if ($format === 'png' || $format === 'webp') {
+            // 保留可能存在的透明通道（如缺口/滑块区域），WebP 同样支持 alpha
             imagealphablending($image, true);
             imagesavealpha($image, true);
         }
@@ -1377,7 +1446,8 @@ class Captcha
         // 仅首次验证（未携带 token）时校验；二次验证以一次性 token 为强凭证，
         // 不再受指纹约束，避免移动网络切换 / 代理导致指纹变化而误杀真实用户。
         $storedFingerprint = $this->getSessionValue($this->sessionKeyFingerprint);
-        if ($token === null && $storedFingerprint !== null && $storedFingerprint !== $this->requestFingerprint) {
+        $fingerprintCheck = (bool) ($this->config['security']['fingerprint_check'] ?? true);
+        if ($fingerprintCheck && $token === null && $storedFingerprint !== null && $storedFingerprint !== $this->requestFingerprint) {
             $this->refresh();
             return [
                 'success' => false,
@@ -1410,8 +1480,8 @@ class Captcha
             $captchaType = self::TYPE_SLIDE;
         }
 
-        // 点击验证码验证：如果传了点击坐标，或类型是点击验证码
-        if (!empty($clickPoints) || $captchaType === self::TYPE_CLICK) {
+        // 按验证码类型路由：以服务端记录的当前类型为准，避免传入多余 clickPoints 时误判为点击验证码
+        if ($captchaType === self::TYPE_CLICK) {
             return $this->verifyClick($clickPoints, $token);
         }
 
@@ -1476,6 +1546,7 @@ class Captcha
             $totalTime = max($totalTime, $t);
             if ($prevT !== null && ($t - $prevT) < $clickMinInterval) {
                 $this->handleFailedCheck();
+                $this->fireEvent('bot_detected', ['type' => self::TYPE_CLICK, 'reason' => 'click_interval_too_short']);
                 return [
                     'success' => false,
                     'token' => null,
@@ -1486,6 +1557,7 @@ class Captcha
         }
         if ($hasTiming && $totalTime < $clickMinTime) {
             $this->handleFailedCheck();
+            $this->fireEvent('bot_detected', ['type' => self::TYPE_CLICK, 'reason' => 'click_too_fast']);
             return [
                 'success' => false,
                 'token' => null,
@@ -1536,6 +1608,7 @@ class Captcha
             $this->handleSuccessfulCheck();
             // 标记已验证：表单提交时 verify() 顶部幂等放行（无需再携带 token）
             $this->setSessionValue($this->sessionKeyCheck, 'used');
+            $this->fireEvent('verify_success', ['type' => self::TYPE_CLICK, 'mode' => self::VERIFY_BACKEND_ONLY]);
             return [
                 'success' => true,
                 'token' => null,
@@ -1642,6 +1715,7 @@ class Captcha
         $this->handleSuccessfulCheck();
         // 标记已验证：表单提交时 verify() 顶部幂等放行（无需再携带 token）
         $this->setSessionValue($this->sessionKeyCheck, 'used');
+        $this->fireEvent('verify_success', ['type' => $this->captchaType, 'mode' => self::VERIFY_BACKEND_ONLY]);
         return [
             'success' => true,
             'token' => null,
@@ -1681,6 +1755,7 @@ class Captcha
         // 首次成功后立即作废缺口位置，防止重复利用同一张图刷 token
         $this->deleteSessionValue($this->sessionKeyR);
 
+        $this->fireEvent('verify_success', ['type' => $this->captchaType, 'mode' => self::VERIFY_DUAL, 'stage' => 'primary']);
         return [
             'success' => true,
             'token' => $token,
@@ -1740,6 +1815,7 @@ class Captcha
         // 标记为已使用
         $this->setSessionValue($this->sessionKeyCheck, 'used');
         $this->handleSuccessfulCheck();
+        $this->fireEvent('verify_success', ['type' => $this->captchaType, 'mode' => self::VERIFY_DUAL, 'stage' => 'secondary']);
 
         return [
             'success' => true,
@@ -1791,6 +1867,9 @@ class Captcha
             // 超限时同时作废滑动缺口位置与点击答案，强制用户刷新验证码
             $this->deleteSessionValue($this->sessionKeyR);
             $this->deleteSessionValue($this->sessionKeyClickData);
+            $this->fireEvent('max_attempts_exceeded', ['type' => $this->captchaType, 'count' => $errCount]);
+        } else {
+            $this->fireEvent('verify_failed', ['type' => $this->captchaType, 'count' => $errCount]);
         }
 
         $this->setSessionValue($this->sessionKeyCheck, 'error');
@@ -1824,6 +1903,7 @@ class Captcha
         }
 
         if ($count >= $maxRequests) {
+            $this->fireEvent('rate_limited', ['window' => $window, 'max_requests' => $maxRequests, 'count' => $count]);
             return false;
         }
 
@@ -1959,7 +2039,7 @@ class Captcha
 
         // 检查最小耗时（防止瞬间完成）
         if ($totalTime < $thresholds['min_time']) {
-            return ['success' => false, 'message' => '操作过快，请重试'];
+            return $this->slideTrackFail('操作过快，请重试');
         }
 
         // 轨迹点数不足时，样本太少不足以判断，直接跳过（通过）而非误判
@@ -1976,7 +2056,7 @@ class Captcha
             $speedRatio = $avgSpeed > 0 ? $maxSpeed / $avgSpeed : 0;
             // 绝对速度阈值（兜底缩放误差）或相对峰值倍数（>6 倍均值视为异常跳跃）
             if ($maxSpeed > $thresholds['max_speed'] && $speedRatio > 6) {
-                return ['success' => false, 'message' => '滑动速度异常，请重试'];
+                return $this->slideTrackFail('滑动速度异常，请重试');
             }
         }
 
@@ -1990,7 +2070,7 @@ class Captcha
         //   1) 累计垂直位移 Σ|dy| ≥ min_vertical（图片像素）；
         //   2) 垂直方向变化 ≥ 1 次（dy 正负翻转）。
         if ($verticalJitter < $thresholds['min_vertical'] && $yDirectionChanges < 1) {
-            return ['success' => false, 'message' => '轨迹异常，请重试'];
+            return $this->slideTrackFail('轨迹异常，请重试');
         }
 
         // 检查速度变化（人类有加减速过程）
@@ -2002,11 +2082,24 @@ class Captcha
             $avgSpeed = $totalDistance / max(1, $totalTime);
             $relVariance = $avgSpeed > 0 ? $speedVariance / ($avgSpeed * $avgSpeed) : 0;
             if ($relVariance < 0.01) {
-                return ['success' => false, 'message' => '滑动轨迹异常，请重试'];
+                return $this->slideTrackFail('滑动轨迹异常，请重试');
             }
         }
 
         return ['success' => true, 'message' => '轨迹验证通过'];
+    }
+
+    /**
+     * 滑动轨迹验证失败（统一触发 bot_detected 事件）
+     *
+     * @param string $message 失败原因描述
+     *
+     * @return array 验证结果
+     */
+    private function slideTrackFail(string $message): array
+    {
+        $this->fireEvent('bot_detected', ['type' => self::TYPE_SLIDE, 'reason' => $message]);
+        return ['success' => false, 'message' => $message];
     }
 
     /**
@@ -2078,7 +2171,7 @@ class Captcha
      */
     private function init(array $bgImages = []): void
     {
-        $images = !empty($bgImages) ? $bgImages : $this->defaultBgImages;
+        $images = !empty($bgImages) ? $bgImages : $this->getDefaultBgImages();
 
         if (empty($images)) {
             throw new RuntimeException('没有可用的背景图片，请配置背景图片');
@@ -2122,6 +2215,9 @@ class Captcha
 
         // imBg 复制缩放后的背景（带缺口将在 createBg 中挖出）
         imagecopy($this->imBg, $this->imScaledBg, 0, 0, 0, 0, $this->bgWidth, $this->bgHeight);
+
+        // 原始大图已完成缩放与复制，立即释放，避免高分辨原图长时间占用内存
+        $this->destroyImage($this->imFullBg);
 
         $this->imSlide = imagecreatetruecolor($this->markWidth, $this->bgHeight);
         if ($this->imSlide === false) {
@@ -2263,6 +2359,11 @@ class Captcha
         );
 
         imagecopy($this->im, $this->imScaledBg, 0, $this->bgHeight * 2, 0, 0, $this->bgWidth, $this->bgHeight);
+
+        // 三个中间图层已合并进 $this->im，立即释放，降低编码阶段的内存峰值
+        $this->destroyImage($this->imBg);
+        $this->destroyImage($this->imSlide);
+        $this->destroyImage($this->imScaledBg);
     }
 
     /**
@@ -2278,6 +2379,12 @@ class Captcha
         $quality = $format === 'webp'
             ? $this->filterInt($this->config['webp_quality'] ?? self::DEFAULT_WEBP_QUALITY, 0, 100)
             : $this->filterInt($this->config['png_quality'] ?? self::DEFAULT_PNG_QUALITY, 0, 9);
+
+        // 启用 alpha 通道保留（与 outputImageToBuffer 保持一致）
+        if ($format === 'png' || $format === 'webp') {
+            imagealphablending($this->im, true);
+            imagesavealpha($this->im, true);
+        }
 
         if (!headers_sent()) {
             header('Content-Type: image/' . $format);
@@ -2380,6 +2487,68 @@ class Captcha
         $this->config = array_merge($this->config, $config);
         $this->applyConfig();
         return $this;
+    }
+
+    /**
+     * 注册实例级事件监听器
+     *
+     * 支持的事件：
+     * - generated              ：验证码生成成功（参数含 type、refresh）
+     * - verify_success         ：验证通过（参数含 type、mode、stage）
+     * - verify_failed          ：验证失败（参数含 type、count）
+     * - bot_detected           ：机器人行为被拦截（参数含 type、reason）
+     * - max_attempts_exceeded  ：错误次数超过上限，已强制刷新（参数含 type、count）
+     * - rate_limited           ：触发速率限制（参数含 window、max_requests）
+     *
+     * @param string   $event    事件名
+     * @param callable $listener 监听器（签名：function(string $event, array $context)）
+     *
+     * @return self 支持链式调用
+     */
+    public function on(string $event, callable $listener): self
+    {
+        $this->eventListeners[$event][] = $listener;
+        return $this;
+    }
+
+    /**
+     * 设置全局事件分发器（跨实例）
+     *
+     * 框架集成层（Laravel / ThinkPHP ServiceProvider）可调用本方法统一注册，
+     * 将安全/审计事件写入日志或上报风控系统。传入 null 可清除。
+     *
+     * @param callable|null $dispatcher 分发器（签名：function(string $event, array $context)）
+     */
+    public static function setEventDispatcher(?callable $dispatcher): void
+    {
+        self::$globalDispatcher = $dispatcher;
+    }
+
+    /**
+     * 触发事件（内部方法）
+     *
+     * 依次通知实例监听器与全局分发器，任一监听器异常均不影响主流程。
+     *
+     * @param string $event  事件名
+     * @param array  $context 事件上下文
+     */
+    private function fireEvent(string $event, array $context = []): void
+    {
+        foreach ($this->eventListeners[$event] ?? [] as $listener) {
+            try {
+                $listener($event, $context);
+            } catch (\Throwable) {
+                // 监听器异常不应影响验证码主流程
+            }
+        }
+
+        if (self::$globalDispatcher !== null) {
+            try {
+                (self::$globalDispatcher)($event, $context);
+            } catch (\Throwable) {
+                // 同上
+            }
+        }
     }
 
     /**
